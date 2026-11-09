@@ -216,5 +216,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+/testMusic/
+
+.venv/
+
 # Streamlit
 .streamlit/secrets.toml
