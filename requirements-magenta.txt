@@ -1,4 +1,6 @@
 # Magenta's inference runtime with versions compatible with Python 3.10.
+# tensor2tensor is installed separately with `--no-deps` (see Makefile) because
+# its unpinned TensorFlow requirement would conflict with the TF 2.9.1 below.
 absl-py==1.2.0
 dm-sonnet==2.0.0
 imageio==2.20.0
@@ -14,6 +16,7 @@ pretty-midi==0.2.9
 pygtrie==2.5.0
 scipy==1.9.3
 six==1.16.0
+sox==1.5.0
 tensorflow==2.9.1
 tensorflow-probability==0.17.0
 tf-slim==1.1.0

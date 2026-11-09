@@ -109,27 +109,40 @@ class InputPanel(ctk.CTkFrame):
 
 
 class SeparatorPanel(ctk.CTkFrame):
-    def __init__(self, master, on_change: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        master,
+        on_change: Callable[[], None],
+        available: dict[str, bool] | None = None,
+    ) -> None:
         super().__init__(master, fg_color="transparent")
-        self.use_demucs = ctk.BooleanVar(value=True)
+        available = available or {"demucs": True, "spleeter": True}
+        demucs_ok = bool(available.get("demucs", True))
+        spleeter_ok = bool(available.get("spleeter", True))
+
+        self.use_demucs = ctk.BooleanVar(value=demucs_ok)
         self.demucs_stem = ctk.StringVar(value="Piano")
-        self.use_spleeter = ctk.BooleanVar(value=False)
+        self.use_spleeter = ctk.BooleanVar(value=not demucs_ok and spleeter_ok)
         self.spleeter_stem = ctk.StringVar(value="Piano")
 
         self._on_change = on_change
         self._build_separator(
             "demucs",
             "Use Demucs",
-            "Six stems, including guitar; usually slower.",
+            "Created by Meta. High-quality six-stem separation "
+            "(drums, bass, vocals, guitar, piano, other) — accurate but a bit slower.",
             self.use_demucs,
             self.demucs_stem,
+            demucs_ok,
         )
         self._build_separator(
             "spleeter",
             "Use Spleeter (5 stems)",
-            "Five stems; usually faster; no separate guitar stem.",
+            "Created by Deezer. Faster five-stem separation "
+            "(vocals, piano, drums, bass, other) — no separate guitar track.",
             self.use_spleeter,
             self.spleeter_stem,
+            spleeter_ok,
         )
 
     def _build_separator(
@@ -139,15 +152,21 @@ class SeparatorPanel(ctk.CTkFrame):
         description: str,
         enabled: ctk.BooleanVar,
         stem: ctk.StringVar,
+        available: bool = True,
     ) -> None:
         frame = ctk.CTkFrame(self, fg_color="transparent")
         frame.pack(fill="x", pady=(2, 4))
-        ctk.CTkCheckBox(
+        if not available:
+            description += " (not installed — run `make install`)"
+        checkbox = ctk.CTkCheckBox(
             frame,
             text=title,
             variable=enabled,
             command=lambda: self._select(name),
-        ).pack(anchor="w")
+        )
+        if not available:
+            checkbox.configure(state="disabled")
+        checkbox.pack(anchor="w")
         ctk.CTkLabel(frame, text=description, text_color="gray").pack(
             anchor="w", padx=28
         )
@@ -205,10 +224,19 @@ class SeparatorPanel(ctk.CTkFrame):
 
 
 class AMTPanel(ctk.CTkFrame):
-    def __init__(self, master, on_change: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        master,
+        on_change: Callable[[], None],
+        available: dict[str, bool] | None = None,
+    ) -> None:
         super().__init__(master, fg_color="transparent")
-        self.use_basic_pitch = ctk.BooleanVar(value=True)
-        self.use_magenta = ctk.BooleanVar(value=False)
+        available = available or {"basic_pitch": True, "magenta": True}
+        basic_ok = bool(available.get("basic_pitch", True))
+        magenta_ok = bool(available.get("magenta", True))
+
+        self.use_basic_pitch = ctk.BooleanVar(value=basic_ok)
+        self.use_magenta = ctk.BooleanVar(value=not basic_ok and magenta_ok)
         self._on_change = on_change
 
         ctk.CTkLabel(
@@ -216,28 +244,44 @@ class AMTPanel(ctk.CTkFrame):
             text="Piano transcription model",
             font=ctk.CTkFont(size=15, weight="bold"),
         ).pack(anchor="w", pady=(2, 4))
-        ctk.CTkCheckBox(
+
+        basic_description = (
+            "Created by Spotify. Fast and lightweight — runs entirely on your computer."
+        )
+        if not basic_ok:
+            basic_description += " (not installed — run `make install`)"
+        basic_checkbox = ctk.CTkCheckBox(
             self,
             text=AMT_MODELS["basic_pitch"],
             variable=self.use_basic_pitch,
             command=lambda: self._select("basic_pitch"),
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            self,
-            text="Transcribes the separated audio and writes MIDI and note CSV.",
-            text_color="gray",
-        ).pack(anchor="w", padx=28, pady=(0, 3))
-        ctk.CTkCheckBox(
+        )
+        if not basic_ok:
+            basic_checkbox.configure(state="disabled")
+        basic_checkbox.pack(anchor="w")
+        ctk.CTkLabel(self, text=basic_description, text_color="gray").pack(
+            anchor="w", padx=28, pady=(0, 3)
+        )
+
+        magenta_description = (
+            "Created by Google. The most accurate choice for solo piano."
+        )
+        if not magenta_ok:
+            magenta_description += (
+                " (not installed — run `make install` and `make install-magenta`)"
+            )
+        magenta_checkbox = ctk.CTkCheckBox(
             self,
             text=AMT_MODELS["magenta"],
             variable=self.use_magenta,
             command=lambda: self._select("magenta"),
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            self,
-            text="Requires the optional Python 3.10 Magenta environment.",
-            text_color="gray",
-        ).pack(anchor="w", padx=28)
+        )
+        if not magenta_ok:
+            magenta_checkbox.configure(state="disabled")
+        magenta_checkbox.pack(anchor="w")
+        ctk.CTkLabel(self, text=magenta_description, text_color="gray").pack(
+            anchor="w", padx=28
+        )
 
     def selection(self) -> str | None:
         if self.use_basic_pitch.get() == self.use_magenta.get():

@@ -1,0 +1,3 @@
+#!C:\Users\Kivi\Documents\git\KiviPiano\.venv-magenta\Scripts\python.exe
+from numba.pycc import main
+main()

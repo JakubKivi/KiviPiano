@@ -9,7 +9,10 @@ from unittest.mock import patch
 import pretty_midi
 
 from kivipiano.transcription import (
-    _ensure_magenta_checkpoint,
+    _require_magenta_checkpoint,
+    download_magenta_checkpoint,
+    magenta_available,
+    magenta_checkpoint_dir,
     transcribe_piano,
 )
 
@@ -92,13 +95,46 @@ class TranscriptionTests(unittest.TestCase):
             "kivipiano.transcription.urlretrieve",
             side_effect=create_checkpoint,
         ) as download:
-            checkpoint = _ensure_magenta_checkpoint(model_dir)
-            cached_checkpoint = _ensure_magenta_checkpoint(model_dir)
+            checkpoint = download_magenta_checkpoint(model_dir)
+            cached_checkpoint = download_magenta_checkpoint(model_dir)
 
-        self.assertEqual(checkpoint, model_dir / "magenta" / "maestro_checkpoint")
+        self.assertEqual(checkpoint, magenta_checkpoint_dir(model_dir))
         self.assertEqual(cached_checkpoint, checkpoint)
         self.assertTrue((checkpoint / "model.index").is_file())
         download.assert_called_once()
+
+    def test_requires_magenta_checkpoint_without_downloading(self):
+        model_dir = self.root / "models"
+        with patch(
+            "kivipiano.transcription.urlretrieve",
+        ) as download:
+            with self.assertRaisesRegex(RuntimeError, "checkpoint is not installed"):
+                _require_magenta_checkpoint(model_dir)
+        download.assert_not_called()
+
+        checkpoint = model_dir / "magenta" / "maestro_checkpoint"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "model.index").touch()
+        self.assertEqual(_require_magenta_checkpoint(model_dir), checkpoint)
+
+    def test_magenta_available_requires_executable_and_checkpoint(self):
+        model_dir = self.root / "models"
+
+        with patch(
+            "kivipiano.transcription._magenta_executable", return_value=None
+        ):
+            self.assertFalse(magenta_available(model_dir))
+
+        executable = self.root / "magenta.exe"
+        executable.touch()
+        checkpoint = model_dir / "magenta" / "maestro_checkpoint"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "model.index").touch()
+        with patch(
+            "kivipiano.transcription._magenta_executable",
+            return_value=executable,
+        ):
+            self.assertTrue(magenta_available(model_dir))
 
     def test_magenta_cli_output_is_normalized_to_csv_and_midi(self):
         executable = self.root / "magenta.exe"
@@ -115,7 +151,7 @@ class TranscriptionTests(unittest.TestCase):
                 )
             )
             midi_data.instruments.append(instrument)
-            midi_data.write(str(audio_path.with_suffix(".midi")))
+            midi_data.write(str(audio_path) + ".midi")
             return SimpleNamespace(returncode=0, stderr="", stdout="")
 
         with (
@@ -124,7 +160,7 @@ class TranscriptionTests(unittest.TestCase):
                 return_value=executable,
             ),
             patch(
-                "kivipiano.transcription._ensure_magenta_checkpoint",
+                "kivipiano.transcription._require_magenta_checkpoint",
                 return_value=checkpoint,
             ),
             patch(

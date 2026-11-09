@@ -1,6 +1,7 @@
 """Piano transcription backends and normalized note export."""
 
 import csv
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -15,6 +16,22 @@ AMT_MODELS = {
     "basic_pitch": "Spotify Basic Pitch",
     "magenta": "Google Magenta (Onsets & Frames)",
 }
+
+
+def basic_pitch_available() -> bool:
+    """Return whether Spotify Basic Pitch is importable (bundled at install)."""
+    try:
+        return importlib.util.find_spec("basic_pitch") is not None
+    except (ImportError, AttributeError, ModuleNotFoundError):
+        return False
+
+
+def magenta_available(model_dir: Path) -> bool:
+    """Return whether Google Magenta is ready to use (runtime + checkpoint)."""
+    return (
+        _magenta_executable() is not None
+        and _has_magenta_checkpoint(magenta_checkpoint_dir(model_dir))
+    )
 MAGENTA_CHECKPOINT_URL = (
     "https://storage.googleapis.com/magentadata/models/"
     "onsets_frames_transcription/maestro_checkpoint.zip"
@@ -101,7 +118,7 @@ def _predict_magenta(audio_path: Path, model_dir: Path) -> MidiData:
             "`make install-magenta`, then restart the application."
         )
 
-    checkpoint_dir = _ensure_magenta_checkpoint(model_dir)
+    checkpoint_dir = _require_magenta_checkpoint(model_dir)
     with tempfile.TemporaryDirectory(prefix="kivipiano-magenta-") as temp_dir:
         temporary_audio = Path(temp_dir) / audio_path.name
         shutil.copy2(audio_path, temporary_audio)
@@ -122,7 +139,7 @@ def _predict_magenta(audio_path: Path, model_dir: Path) -> MidiData:
                 + (f":\n{details[-2000:]}" if details else ".")
             )
 
-        midi_path = temporary_audio.with_suffix(".midi")
+        midi_path = Path(str(temporary_audio) + ".midi")
         if not midi_path.is_file():
             raise RuntimeError(
                 "Google Magenta finished without producing a MIDI transcription."
@@ -159,9 +176,23 @@ def _magenta_executable() -> Path | None:
     return Path(located) if located else None
 
 
-def _ensure_magenta_checkpoint(model_dir: Path) -> Path:
-    checkpoint_dir = model_dir / "magenta" / "maestro_checkpoint"
-    if any(checkpoint_dir.glob("train/*.index")):
+def magenta_checkpoint_dir(model_dir: Path) -> Path:
+    """Return the directory where the Magenta checkpoint is stored."""
+    return Path(model_dir).expanduser().resolve() / "magenta" / "maestro_checkpoint"
+
+
+def _has_magenta_checkpoint(checkpoint_dir: Path) -> bool:
+    return any(checkpoint_dir.glob("*.index"))
+
+
+def download_magenta_checkpoint(model_dir: Path) -> Path:
+    """Download the Magenta checkpoint into ``model_dir`` (install-time only).
+
+    This is run by ``make install`` so the application never downloads models
+    while it is running.
+    """
+    checkpoint_dir = magenta_checkpoint_dir(model_dir)
+    if _has_magenta_checkpoint(checkpoint_dir):
         return checkpoint_dir
 
     checkpoint_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -208,10 +239,21 @@ def _ensure_magenta_checkpoint(model_dir: Path) -> Path:
         shutil.copytree(source_dir, staged_dir)
         staged_dir.replace(checkpoint_dir)
 
-    if not any(checkpoint_dir.glob("*.index")):
+    if not _has_magenta_checkpoint(checkpoint_dir):
         raise RuntimeError(
             "The Magenta checkpoint was downloaded, but its expected train "
             "checkpoint was not found."
+        )
+    return checkpoint_dir
+
+
+def _require_magenta_checkpoint(model_dir: Path) -> Path:
+    """Return the pre-downloaded Magenta checkpoint, without downloading it."""
+    checkpoint_dir = magenta_checkpoint_dir(model_dir)
+    if not _has_magenta_checkpoint(checkpoint_dir):
+        raise RuntimeError(
+            "The Google Magenta checkpoint is not installed. Run `make install` "
+            "to download all models before using the app."
         )
     return checkpoint_dir
 

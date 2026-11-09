@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kivipiano.separation import separate_stem
+from kivipiano.separation import _spleeter_model_cached, separate_stem
 
 
 class SeparationValidationTests(unittest.TestCase):
@@ -40,6 +40,16 @@ class SeparationValidationTests(unittest.TestCase):
                     separator_name="spleeter",
                     stem_name="guitar",
                 )
+
+    def test_spleeter_model_cached_detects_probe_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.assertFalse(_spleeter_model_cached(root))
+
+            probe_dir = root / "spleeter" / "5stems"
+            probe_dir.mkdir(parents=True)
+            (probe_dir / ".probe").touch()
+            self.assertTrue(_spleeter_model_cached(root))
 
 
 if __name__ == "__main__":

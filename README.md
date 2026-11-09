@@ -6,10 +6,13 @@ From MP3 file to LED indicators on your piano
 On Windows, install Python 3.11 and GNU Make, then run `make install` once and
 start the app with `make run`. Both commands use the same project-local
 `.venv`, so Demucs and Spleeter are available to the app without a second
-Python interpreter. Choose an MP3/WAV file or paste a single-video YouTube
-URL. YouTube audio is downloaded with yt-dlp and converted to MP3 by FFmpeg,
-then sent through the selected audio-separation and piano-transcription
-pipeline.
+Python interpreter. `make install` also installs Python 3.10 for Google
+Magenta (if missing), downloads every AI model into `~/.kivipiano/models`, and
+sets up everything needed, so the application never downloads models while it
+is running. Any model that is missing is shown greyed out in the app. Choose
+an MP3/WAV file or paste a single-video YouTube URL. YouTube audio is
+downloaded with yt-dlp and converted to MP3 by FFmpeg, then sent through the
+selected audio-separation and piano-transcription pipeline.
 `imageio-ffmpeg` provides FFmpeg for conversion. Demucs also requires
 `ffprobe`; on Windows install it with
 `winget install --id Gyan.FFmpeg.Shared`. The application detects this
@@ -25,9 +28,10 @@ separated stems under `~/.kivipiano/output`.
 Choose either Demucs or Spleeter; selecting one automatically deselects the
 other. Each model offers its available stems in the **Stem** selector:
 Demucs `htdemucs_6s` provides drums, bass, other, vocals, guitar, and piano;
-Spleeter `5stems` provides vocals, piano, drums, bass, and other. Model files
-are downloaded on first use and cached under `~/.kivipiano/models`. Output
-filenames start with `demucs_` or `spleeter_` and include the selected stem.
+Spleeter `5stems` provides vocals, piano, drums, bass, and other. All model
+files are downloaded during `make install` and cached under
+`~/.kivipiano/models`. Output filenames start with `demucs_` or `spleeter_`
+and include the selected stem.
 
 ## Piano transcription
 
@@ -39,10 +43,13 @@ stem.
 
 Google Magenta Onsets & Frames is available as an optional backend. Its legacy
 TensorFlow dependencies conflict with the application's Python 3.11/Spleeter
-environment, so install it separately with Python 3.10 available and
-`make install-magenta`. The Magenta checkpoint is downloaded and cached under
-`~/.kivipiano/models` the first time that model is used. It also writes MIDI
-and normalized CSV output alongside the separated audio.
+environment, so `make install` sets it up in a separate Python 3.10 environment
+(`.venv-magenta`), installing Python 3.10 automatically if it is missing. If it
+still cannot be installed, its checkbox is greyed out at startup; install
+Python 3.10 and run `make install-magenta` to enable it. Its checkpoint is
+downloaded by `make install` into `~/.kivipiano/models`, so the app never
+downloads models while running. It also writes MIDI and normalized CSV output
+alongside the separated audio.
 
 Spleeter 2.4.2 requires Python 3.8 through 3.11. `make install` creates a
 Python 3.11 environment and installs the app, both separator dependencies, and

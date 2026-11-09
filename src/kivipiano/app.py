@@ -9,9 +9,10 @@ import customtkinter as ctk
 
 from kivipiano.config import AppPaths
 from kivipiano.media import list_saved_audio
+from kivipiano.separation import demucs_available, spleeter_available
 from kivipiano.services.processing import AudioProcessingService, ProcessingRequest
+from kivipiano.transcription import AMT_MODELS, basic_pitch_available, magenta_available
 from kivipiano.ui.components import AMTPanel, InputPanel, SeparatorPanel
-from kivipiano.transcription import AMT_MODELS
 
 
 ctk.set_appearance_mode("System")
@@ -67,12 +68,23 @@ class KiviPianoApp(ctk.CTk):
             on_refresh=self.refresh_library,
         )
         self.input_panel.pack(fill="x", padx=20, pady=(0, 12))
+        model_dir = self.paths.model_dir
         self.separator_panel = SeparatorPanel(
-            self.main_frame, on_change=self._update_process_button
+            self.main_frame,
+            on_change=self._update_process_button,
+            available={
+                "demucs": demucs_available(model_dir),
+                "spleeter": spleeter_available(model_dir),
+            },
         )
         self.separator_panel.pack(fill="x", padx=32, pady=(2, 4))
         self.amt_panel = AMTPanel(
-            self.main_frame, on_change=self._update_process_button
+            self.main_frame,
+            on_change=self._update_process_button,
+            available={
+                "basic_pitch": basic_pitch_available(),
+                "magenta": magenta_available(model_dir),
+            },
         )
         self.amt_panel.pack(fill="x", padx=32, pady=(4, 8))
 
@@ -249,7 +261,7 @@ class KiviPianoApp(ctk.CTk):
                 if source_mode == "youtube"
                 else f"Extracting the {stem_name} stem with "
                 f"{separator_name.title()}, then transcribing with "
-                f"{AMT_MODELS[amt_model]}. Model files may download on first use..."
+                f"{AMT_MODELS[amt_model]}..."
             ),
             text_color="gray",
         )
