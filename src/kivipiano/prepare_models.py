@@ -1,18 +1,15 @@
 """Pre-download every model KiviPiano needs before the app is first run.
 
 Run with ``python -m kivipiano.prepare_models`` (normally invoked automatically
-by ``make install``). Spotify Basic Pitch ships its model inside the installed
-package, so only the Demucs, Spleeter and Google Magenta models are downloaded
-here. Everything lands under ``~/.kivipiano/models`` so the running application
-never needs to download a model itself.
+by ``make install``). Every model checkpoint is downloaded into
+``~/.kivipiano/models`` so containers never need network access during inference.
 """
 
 import sys
 from pathlib import Path
 
 from kivipiano.config import AppPaths
-from kivipiano.separation import download_demucs_model, download_spleeter_model
-from kivipiano.transcription import download_magenta_checkpoint
+from kivipiano.docker_runtime import MODEL_IMAGES, run_model_container
 
 
 def prepare_all(model_dir: Path) -> None:
@@ -20,9 +17,9 @@ def prepare_all(model_dir: Path) -> None:
     model_path = Path(model_dir).expanduser().resolve()
     model_path.mkdir(parents=True, exist_ok=True)
 
-    download_demucs_model(model_path)
-    download_spleeter_model(model_path)
-    download_magenta_checkpoint(model_path)
+    for model_name in MODEL_IMAGES:
+        print(f"Preparing {model_name} container and model...")
+        run_model_container(model_name, "prepare", model_path)
 
 
 def main(argv: list[str] | None = None) -> int:

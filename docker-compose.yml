@@ -1,0 +1,50 @@
+services:
+  demucs:
+    image: kivipiano-demucs:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BACKEND: demucs
+  spleeter:
+    image: kivipiano-spleeter:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BACKEND: spleeter
+  basic-pitch:
+    image: kivipiano-basic-pitch:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BACKEND: basic_pitch
+  magenta:
+    image: kivipiano-magenta:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BACKEND: magenta
+  bytedance:
+    image: kivipiano-bytedance:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BACKEND: bytedance
+  mt3:
+    image: kivipiano-mt3:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BACKEND: mt3
+  omnizart:
+    image: kivipiano-omnizart:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BACKEND: omnizart

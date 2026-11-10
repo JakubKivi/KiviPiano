@@ -11,7 +11,7 @@ from kivipiano.config import AppPaths
 from kivipiano.media import list_saved_audio
 from kivipiano.separation import demucs_available, spleeter_available
 from kivipiano.services.processing import AudioProcessingService, ProcessingRequest
-from kivipiano.transcription import AMT_MODELS, basic_pitch_available, magenta_available
+from kivipiano.transcription import AMT_MODELS, amt_model_available
 from kivipiano.ui.components import AMTPanel, InputPanel, SeparatorPanel
 
 
@@ -82,8 +82,8 @@ class KiviPianoApp(ctk.CTk):
             self.main_frame,
             on_change=self._update_process_button,
             available={
-                "basic_pitch": basic_pitch_available(),
-                "magenta": magenta_available(model_dir),
+                model_name: amt_model_available(model_name, model_dir)
+                for model_name in AMT_MODELS
             },
         )
         self.amt_panel.pack(fill="x", padx=32, pady=(4, 8))
@@ -194,7 +194,7 @@ class KiviPianoApp(ctk.CTk):
         if amt_model is None:
             messagebox.showwarning(
                 "Select a transcription model",
-                "Select exactly one AMT model: Basic Pitch or Google Magenta.",
+                "Select exactly one available AMT model.",
                 parent=self,
             )
             return

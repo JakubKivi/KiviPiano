@@ -1,4 +1,5 @@
 import csv
+import os
 import tempfile
 import unittest
 import zipfile
@@ -9,6 +10,7 @@ from unittest.mock import patch
 import pretty_midi
 
 from kivipiano.transcription import (
+    AMT_MODELS,
     _require_magenta_checkpoint,
     download_magenta_checkpoint,
     magenta_available,
@@ -39,9 +41,12 @@ class TranscriptionTests(unittest.TestCase):
             write=write_midi,
         )
         output_dir = self.root / "output"
-        with patch(
-            "kivipiano.transcription._predict_basic_pitch",
-            return_value=midi_data,
+        with (
+            patch.dict(os.environ, {"KIVIPIANO_CONTAINER_WORKER": "1"}),
+            patch(
+                "kivipiano.transcription._predict_basic_pitch",
+                return_value=midi_data,
+            ),
         ):
             csv_path, midi_path, note_count = transcribe_piano(
                 str(self.audio_path),
@@ -121,18 +126,15 @@ class TranscriptionTests(unittest.TestCase):
         model_dir = self.root / "models"
 
         with patch(
-            "kivipiano.transcription._magenta_executable", return_value=None
+            "kivipiano.transcription.image_available", return_value=False
         ):
             self.assertFalse(magenta_available(model_dir))
 
-        executable = self.root / "magenta.exe"
-        executable.touch()
         checkpoint = model_dir / "magenta" / "maestro_checkpoint"
         checkpoint.mkdir(parents=True)
         (checkpoint / "model.index").touch()
         with patch(
-            "kivipiano.transcription._magenta_executable",
-            return_value=executable,
+            "kivipiano.transcription.image_available", return_value=True
         ):
             self.assertTrue(magenta_available(model_dir))
 
@@ -155,6 +157,7 @@ class TranscriptionTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stderr="", stdout="")
 
         with (
+            patch.dict(os.environ, {"KIVIPIANO_CONTAINER_WORKER": "1"}),
             patch(
                 "kivipiano.transcription._magenta_executable",
                 return_value=executable,
@@ -183,7 +186,10 @@ class TranscriptionTests(unittest.TestCase):
         self.assertEqual(row["model"], "magenta")
 
     def test_magenta_requires_its_optional_runtime(self):
-        with patch("kivipiano.transcription._magenta_executable", return_value=None):
+        with (
+            patch.dict(os.environ, {"KIVIPIANO_CONTAINER_WORKER": "1"}),
+            patch("kivipiano.transcription._magenta_executable", return_value=None),
+        ):
             with self.assertRaisesRegex(RuntimeError, "Google Magenta is not installed"):
                 transcribe_piano(
                     str(self.audio_path),
@@ -191,6 +197,46 @@ class TranscriptionTests(unittest.TestCase):
                     str(self.root / "models"),
                     "magenta",
                 )
+
+    def test_all_transcription_models_run_in_their_own_container(self):
+        models_dir = self.root / "models"
+        for model_name in AMT_MODELS:
+            with self.subTest(model=model_name):
+                output_dir = self.root / model_name
+
+                def transcribe_in_container(
+                    container_name,
+                    operation,
+                    _model_dir,
+                    _audio_path,
+                    destination,
+                    _stem_name=None,
+                ):
+                    self.assertEqual(container_name, model_name)
+                    self.assertEqual(operation, "transcribe")
+                    destination = Path(destination)
+                    stem = f"{self.audio_path.stem}_{model_name}"
+                    (destination / f"{stem}.mid").write_bytes(b"midi")
+                    (destination / f"{stem}.csv").write_text(
+                        "start_time,end_time,pitch,velocity,model\n"
+                        f"0.1,0.2,60,90,{model_name}\n",
+                        encoding="utf-8",
+                    )
+
+                with patch(
+                    "kivipiano.transcription.run_model_container",
+                    side_effect=transcribe_in_container,
+                ):
+                    csv_path, midi_path, note_count = transcribe_piano(
+                        str(self.audio_path),
+                        str(output_dir),
+                        str(models_dir),
+                        model_name,
+                    )
+
+                self.assertEqual(note_count, 1)
+                self.assertTrue(csv_path.is_file())
+                self.assertTrue(midi_path.is_file())
 
 
 if __name__ == "__main__":

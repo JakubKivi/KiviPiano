@@ -1,0 +1,12 @@
+.git
+.venv
+.venv-*
+.pytest_cache
+build
+dist
+testMusic
+__pycache__
+*.py[cod]
+*.egg-info
+.continue
+.docker-installed

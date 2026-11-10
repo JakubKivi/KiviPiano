@@ -3,7 +3,8 @@
 import os
 from pathlib import Path
 import shutil
-import sys
+
+from kivipiano.docker_runtime import image_available, run_model_container
 
 
 DEMUCS_PIANO_MODEL = "htdemucs_6s"
@@ -30,7 +31,7 @@ def download_demucs_model(model_dir: str | Path) -> None:
         from demucs.api import Separator
     except ImportError as exc:
         raise RuntimeError(
-            "Demucs is unavailable. Install the project requirements and try again."
+            "Demucs is unavailable in its container image. Run `make install`."
         ) from exc
 
     Separator(model=DEMUCS_PIANO_MODEL, device="cpu")
@@ -51,9 +52,7 @@ def download_spleeter_model(model_dir: str | Path) -> None:
         from spleeter.model.provider import ModelProvider
     except ImportError as exc:
         raise RuntimeError(
-            "Spleeter is unavailable. Run KiviPiano with Python 3.11, install "
-            "requirements-spleeter.txt, then install Spleeter 2.4.2 with "
-            "`python -m pip install --no-deps spleeter==2.4.2`."
+            "Spleeter is unavailable in its container image. Run `make install`."
         ) from exc
 
     ModelProvider.default().get(SPLEETER_MODEL_NAME)
@@ -83,14 +82,16 @@ def _spleeter_model_cached(model_dir: Path) -> bool:
 
 def demucs_available(model_dir: str | Path) -> bool:
     """Return whether Demucs is ready to use (model pre-downloaded)."""
-    return _demucs_model_cached(Path(model_dir).expanduser().resolve())
+    return image_available("demucs") and _demucs_model_cached(
+        Path(model_dir).expanduser().resolve()
+    )
 
 
 def spleeter_available(model_dir: str | Path) -> bool:
     """Return whether Spleeter is ready to use (model pre-downloaded and supported)."""
-    if not (3, 8) <= sys.version_info[:2] < (3, 12):
-        return False
-    return _spleeter_model_cached(Path(model_dir).expanduser().resolve())
+    return image_available("spleeter") and _spleeter_model_cached(
+        Path(model_dir).expanduser().resolve()
+    )
 
 
 def _configure_ffmpeg(require_ffprobe: bool = True) -> None:
@@ -147,11 +148,27 @@ def separate_stem(
     output_path.mkdir(parents=True, exist_ok=True)
     model_path.mkdir(parents=True, exist_ok=True)
 
-    if separator_name == "spleeter" and not (3, 8) <= sys.version_info[:2] < (3, 12):
-        raise RuntimeError(
-            "Spleeter 2.4.2 requires Python 3.8 through 3.11. Run `make install` "
-            "and `make run` to use the project's Python 3.11 environment."
+    if os.environ.get("KIVIPIANO_CONTAINER_WORKER") != "1":
+        run_model_container(
+            separator_name,
+            "separate",
+            model_path,
+            source,
+            output_path,
+            stem_name,
         )
+        stem_dir = (
+            output_path / DEMUCS_PIANO_MODEL
+            if separator_name == "demucs"
+            else output_path / "spleeter_5stems"
+        )
+        stem_path = stem_dir / f"{separator_name}_{source.stem}_{stem_name}.wav"
+        if not stem_path.is_file():
+            raise RuntimeError(
+                f"The {separator_name} container finished without producing "
+                f"the {stem_name} stem."
+            )
+        return stem_path
 
     _configure_ffmpeg(require_ffprobe=separator_name == "demucs")
 
@@ -169,7 +186,7 @@ def separate_stem(
             from demucs.api import Separator, save_audio
         except ImportError as exc:
             raise RuntimeError(
-                "Demucs is unavailable. Install the project requirements and try again."
+                "Demucs is unavailable in its container image. Run `make install`."
             ) from exc
 
         separator = Separator(model=DEMUCS_PIANO_MODEL, device="cpu")

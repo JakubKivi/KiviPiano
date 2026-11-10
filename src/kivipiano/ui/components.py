@@ -231,12 +231,14 @@ class AMTPanel(ctk.CTkFrame):
         available: dict[str, bool] | None = None,
     ) -> None:
         super().__init__(master, fg_color="transparent")
-        available = available or {"basic_pitch": True, "magenta": True}
-        basic_ok = bool(available.get("basic_pitch", True))
-        magenta_ok = bool(available.get("magenta", True))
-
-        self.use_basic_pitch = ctk.BooleanVar(value=basic_ok)
-        self.use_magenta = ctk.BooleanVar(value=not basic_ok and magenta_ok)
+        available = available or {name: True for name in AMT_MODELS}
+        first_available = next(
+            (name for name in AMT_MODELS if available.get(name, False)), None
+        )
+        self.model_vars = {
+            name: ctk.BooleanVar(value=name == first_available)
+            for name in AMT_MODELS
+        }
         self._on_change = on_change
 
         ctk.CTkLabel(
@@ -245,52 +247,48 @@ class AMTPanel(ctk.CTkFrame):
             font=ctk.CTkFont(size=15, weight="bold"),
         ).pack(anchor="w", pady=(2, 4))
 
-        basic_description = (
-            "Created by Spotify. Fast and lightweight — runs entirely on your computer."
-        )
-        if not basic_ok:
-            basic_description += " (not installed — run `make install`)"
-        basic_checkbox = ctk.CTkCheckBox(
-            self,
-            text=AMT_MODELS["basic_pitch"],
-            variable=self.use_basic_pitch,
-            command=lambda: self._select("basic_pitch"),
-        )
-        if not basic_ok:
-            basic_checkbox.configure(state="disabled")
-        basic_checkbox.pack(anchor="w")
-        ctk.CTkLabel(self, text=basic_description, text_color="gray").pack(
-            anchor="w", padx=28, pady=(0, 3)
-        )
-
-        magenta_description = (
-            "Created by Google. The most accurate choice for solo piano."
-        )
-        if not magenta_ok:
-            magenta_description += (
-                " (not installed — run `make install` and `make install-magenta`)"
+        descriptions = {
+            "basic_pitch": "Spotify. Lightweight piano transcription.",
+            "magenta": "Google. Onsets & Frames for piano.",
+            "bytedance": "ByteDance. High-resolution piano transcription with pedals.",
+            "mt3": "Google. Multi-instrument transcription model.",
+            "omnizart": "Music and Culture Technology Lab. General music transcription.",
+        }
+        options = ctk.CTkScrollableFrame(self, height=176, fg_color="transparent")
+        options.pack(fill="x")
+        for model_name, label in AMT_MODELS.items():
+            is_available = bool(available.get(model_name, False))
+            description = descriptions[model_name]
+            if not is_available:
+                description += " (unavailable — start Docker Desktop and run `make install`)"
+            checkbox = ctk.CTkCheckBox(
+                options,
+                text=label,
+                variable=self.model_vars[model_name],
+                command=lambda selected=model_name: self._select(selected),
             )
-        magenta_checkbox = ctk.CTkCheckBox(
-            self,
-            text=AMT_MODELS["magenta"],
-            variable=self.use_magenta,
-            command=lambda: self._select("magenta"),
-        )
-        if not magenta_ok:
-            magenta_checkbox.configure(state="disabled")
-        magenta_checkbox.pack(anchor="w")
-        ctk.CTkLabel(self, text=magenta_description, text_color="gray").pack(
-            anchor="w", padx=28
-        )
+            if not is_available:
+                checkbox.configure(state="disabled")
+            checkbox.pack(anchor="w")
+            ctk.CTkLabel(
+                options,
+                text=description,
+                text_color="gray",
+                wraplength=650,
+                justify="left",
+            ).pack(anchor="w", padx=28, pady=(0, 3))
 
     def selection(self) -> str | None:
-        if self.use_basic_pitch.get() == self.use_magenta.get():
-            return None
-        return "basic_pitch" if self.use_basic_pitch.get() else "magenta"
+        selected = [
+            model_name
+            for model_name, variable in self.model_vars.items()
+            if variable.get()
+        ]
+        return selected[0] if len(selected) == 1 else None
 
     def _select(self, selected: str) -> None:
-        if selected == "basic_pitch" and self.use_basic_pitch.get():
-            self.use_magenta.set(False)
-        elif selected == "magenta" and self.use_magenta.get():
-            self.use_basic_pitch.set(False)
+        if self.model_vars[selected].get():
+            for model_name, variable in self.model_vars.items():
+                if model_name != selected:
+                    variable.set(False)
         self._on_change()
