@@ -1,9 +1,14 @@
+import csv
 import tempfile
 import unittest
 from pathlib import Path
 
 from kivipiano.config import AppPaths
-from kivipiano.services.processing import AudioProcessingService, ProcessingRequest
+from kivipiano.services.processing import (
+    AudioProcessingService,
+    ModelWeight,
+    ProcessingRequest,
+)
 
 
 class AudioProcessingServiceTests(unittest.TestCase):
@@ -22,6 +27,7 @@ class AudioProcessingServiceTests(unittest.TestCase):
             "save_for_later": False,
             "separator": "demucs",
             "stem": "piano",
+            "amt_models": (ModelWeight("basic_pitch", 1.0),),
         }
         values.update(overrides)
         return ProcessingRequest(**values)
@@ -45,10 +51,14 @@ class AudioProcessingServiceTests(unittest.TestCase):
             output_path = Path(output_dir)
             csv_path = output_path / f"{model}.csv"
             midi_path = output_path / f"{model}.mid"
-            csv_path.write_text("start_time,end_time,pitch\n", encoding="utf-8")
+            csv_path.write_text(
+                "start_time,end_time,pitch,velocity,model\n"
+                f"0.1,0.2,60,90,{model}\n",
+                encoding="utf-8",
+            )
             midi_path.touch()
             self.transcriptions.append((audio_path, Path(model_dir), model))
-            return csv_path, midi_path, 0
+            return csv_path, midi_path, 1
 
         return AudioProcessingService(
             self.paths,
@@ -64,7 +74,9 @@ class AudioProcessingServiceTests(unittest.TestCase):
         result = self.make_service().process(self.request(source=str(source)))
 
         self.assertEqual(result.output_path.parent, self.root / "KiviPiano_output")
-        self.assertEqual(result.output_path.name, "basic_pitch.csv")
+        self.assertEqual(result.output_path.name, "demucs_song_piano_fused.csv")
+        self.assertEqual(result.midi_path.name, "demucs_song_piano_fused.mid")
+        self.assertTrue(result.midi_path.is_file())
         self.assertIsNone(result.selected_audio)
         self.assertEqual(self.calls[0][2], self.paths.model_dir)
         self.assertEqual(self.transcriptions[0][1], self.paths.model_dir)
@@ -75,7 +87,10 @@ class AudioProcessingServiceTests(unittest.TestCase):
         source.touch()
 
         self.make_service().process(
-            self.request(source=str(source), amt_model="magenta")
+            self.request(
+                source=str(source),
+                amt_models=(ModelWeight("magenta", 1.0),),
+            )
         )
 
         self.assertEqual(self.transcriptions[0][2], "magenta")
@@ -144,8 +159,45 @@ class AudioProcessingServiceTests(unittest.TestCase):
 
     def test_rejects_unknown_transcription_models_before_separating(self):
         with self.assertRaisesRegex(ValueError, "Unknown transcription model"):
-            self.make_service().process(self.request(amt_model="unknown"))
+            self.make_service().process(
+                self.request(amt_models=(ModelWeight("unknown", 1.0),))
+            )
         self.assertEqual(self.calls, [])
+
+    def test_rejects_empty_model_selection(self):
+        with self.assertRaisesRegex(ValueError, "Select at least one transcription model"):
+            self.make_service().process(self.request(amt_models=()))
+
+    def test_rejects_non_positive_model_weights(self):
+        with self.assertRaisesRegex(ValueError, "positive number"):
+            self.make_service().process(
+                self.request(amt_models=(ModelWeight("basic_pitch", 0),))
+            )
+
+    def test_fuses_selected_models_into_one_output(self):
+        source = self.root / "song.mp3"
+        source.touch()
+
+        result = self.make_service().process(
+            self.request(
+                source=str(source),
+                amt_models=(
+                    ModelWeight("basic_pitch", 1.0),
+                    ModelWeight("magenta", 1.0),
+                ),
+            )
+        )
+
+        self.assertEqual(
+            [call[2] for call in self.transcriptions],
+            ["basic_pitch", "magenta"],
+        )
+        self.assertEqual(result.output_path.name, "demucs_song_piano_fused.csv")
+        with result.output_path.open(encoding="utf-8", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pitch"], "60")
+        self.assertEqual(rows[0]["models"], "basic_pitch;magenta")
 
 
 if __name__ == "__main__":

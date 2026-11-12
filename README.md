@@ -5,9 +5,11 @@ From MP3 file to LED indicators on your piano
 
 On Windows, install Python 3.11, GNU Make, and Docker Desktop (with Linux
 containers enabled), then run `make install` once and start the app with
-`make run`. The app and its GUI run in the project-local `.venv`; each
-separator and transcription model runs in its own Docker image. `make install`
-builds all seven model images and downloads every model into
+`make run`. The app and its GUI run in the project-local `.venv` (Python 3.11);
+each separator and transcription model runs in its own Docker image (Python
+3.10 — a separate, isolated runtime, so the two versions never conflict).
+`make install`
+builds all six model images and downloads every model into
 `~/.kivipiano/models`. During processing, the workers run without network
 access, so inference never downloads software or checkpoints. Any model whose
 image or checkpoint is missing is shown greyed out in the app. Choose
@@ -36,7 +38,7 @@ and include the selected stem.
 
 After separation, choose exactly one AMT model and click **Process**. Spotify
 Basic Pitch, Google Magenta Onsets & Frames, ByteDance Piano Transcription,
-Google MT3, and Omnizart each run in a separate container. Each writes a MIDI
+and Omnizart each run in a separate container. Each writes a MIDI
 file and normalized CSV (`start_time`, `end_time`, `pitch`, `velocity`,
 `model`) beside the separated stem.
 

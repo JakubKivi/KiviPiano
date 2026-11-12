@@ -11,7 +11,6 @@ MODEL_IMAGES = {
     "basic_pitch": "kivipiano-basic-pitch:latest",
     "magenta": "kivipiano-magenta:latest",
     "bytedance": "kivipiano-bytedance:latest",
-    "mt3": "kivipiano-mt3:latest",
     "omnizart": "kivipiano-omnizart:latest",
 }
 

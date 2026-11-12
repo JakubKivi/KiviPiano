@@ -8,11 +8,29 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from kivipiano.config import AppPaths
+from kivipiano.fusion import FusedNote, read_fused_csv
 from kivipiano.media import list_saved_audio
+from kivipiano.midi_export import (
+    DeviceTransport,
+    LoggingTransport,
+    build_device_events,
+    write_tempo_midi,
+)
 from kivipiano.separation import demucs_available, spleeter_available
-from kivipiano.services.processing import AudioProcessingService, ProcessingRequest
+from kivipiano.services.processing import (
+    AudioProcessingService,
+    ModelWeight,
+    ProcessingRequest,
+)
 from kivipiano.transcription import AMT_MODELS, amt_model_available
-from kivipiano.ui.components import AMTPanel, InputPanel, SeparatorPanel
+from kivipiano.ui.components import (
+    AMTPanel,
+    DevicePanel,
+    InputPanel,
+    MidiPanel,
+    PlaybackConfig,
+    SeparatorPanel,
+)
 
 
 ctk.set_appearance_mode("System")
@@ -32,14 +50,18 @@ class KiviPianoApp(ctk.CTk):
         )
 
         self.title("KiviPiano - Piano Transcription")
-        self.geometry("760x850")
-        self.minsize(680, 760)
+        self.geometry("760x900")
+        self.minsize(680, 780)
 
         self.processing_results: Queue[
-            tuple[bool, str, Path | None, Path | None]
+            tuple[bool, str, Path | None, Path | None, Path | None]
         ] = Queue()
+        self.progress_messages: Queue[str] = Queue()
         self.processing = False
         self.output_file: Path | None = None
+        self.fused_midi_path: Path | None = None
+        self.fused_notes: list[FusedNote] = []
+        self.device_transport: DeviceTransport = LoggingTransport()
 
         self._build_ui()
         self.refresh_library()
@@ -61,42 +83,106 @@ class KiviPianoApp(ctk.CTk):
             font=ctk.CTkFont(size=13),
         ).pack(pady=(0, 12))
 
+        self.steps = ["file", "separator", "amt", "midi", "device"]
+        self.step_labels = {
+            "file": "1. File",
+            "separator": "2. Separator",
+            "amt": "3. AMT models",
+            "midi": "4. MIDI",
+            "device": "5. Device",
+        }
+        self.current_step = ctk.StringVar(value=self.steps[0])
+
+        step_bar = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        step_bar.pack(fill="x", padx=20, pady=(0, 10))
+        self.step_radios: dict[str, ctk.CTkRadioButton] = {}
+        for value in self.steps:
+            self.step_radios[value] = ctk.CTkRadioButton(
+                step_bar,
+                text=self.step_labels[value],
+                variable=self.current_step,
+                value=value,
+                command=self._show_step,
+            )
+            self.step_radios[value].pack(side="left", padx=(0, 16))
+
+        self.step_container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.step_container.pack(fill="x", pady=(0, 8))
+
         self.input_panel = InputPanel(
-            self.main_frame,
+            self.step_container,
             on_change=self._update_process_button,
             on_browse=self.browse_file,
             on_refresh=self.refresh_library,
         )
-        self.input_panel.pack(fill="x", padx=20, pady=(0, 12))
         model_dir = self.paths.model_dir
         self.separator_panel = SeparatorPanel(
-            self.main_frame,
+            self.step_container,
             on_change=self._update_process_button,
             available={
                 "demucs": demucs_available(model_dir),
                 "spleeter": spleeter_available(model_dir),
             },
         )
-        self.separator_panel.pack(fill="x", padx=32, pady=(2, 4))
         self.amt_panel = AMTPanel(
-            self.main_frame,
+            self.step_container,
             on_change=self._update_process_button,
             available={
                 model_name: amt_model_available(model_name, model_dir)
                 for model_name in AMT_MODELS
             },
         )
-        self.amt_panel.pack(fill="x", padx=32, pady=(4, 8))
+        self.playback_config = PlaybackConfig()
+        self.midi_panel = MidiPanel(
+            self.step_container,
+            config=self.playback_config,
+            on_download=self.download_midi,
+            on_change=self._update_process_button,
+        )
+        self.device_panel = DevicePanel(
+            self.step_container,
+            config=self.playback_config,
+            on_send=self.send_to_device,
+            on_change=self._update_process_button,
+        )
+        self.step_panels = {
+            "file": self.input_panel,
+            "separator": self.separator_panel,
+            "amt": self.amt_panel,
+            "midi": self.midi_panel,
+            "device": self.device_panel,
+        }
 
+        self.nav_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.nav_frame.pack(fill="x", padx=20, pady=(4, 10))
+
+        self.back_btn = ctk.CTkButton(
+            self.nav_frame,
+            text="Back",
+            command=self._previous_step,
+            width=110,
+            height=38,
+            fg_color="transparent",
+            border_width=1,
+            text_color=("gray10", "gray90"),
+        )
+        self.next_btn = ctk.CTkButton(
+            self.nav_frame,
+            text="Next",
+            command=self._next_step,
+            width=110,
+            height=38,
+        )
         self.process_btn = ctk.CTkButton(
-            self.main_frame,
+            self.nav_frame,
             text="Process",
             command=self.process_file,
             state="disabled",
-            height=42,
+            width=130,
+            height=38,
             font=ctk.CTkFont(size=15, weight="bold"),
         )
-        self.process_btn.pack(pady=(4, 12))
+
         self.open_output_btn = ctk.CTkButton(
             self.main_frame,
             text="Open Output Folder",
@@ -117,6 +203,56 @@ class KiviPianoApp(ctk.CTk):
             justify="left",
         )
         self.status_lbl.pack(fill="x", padx=20, side="bottom", pady=(0, 15))
+
+        self._show_step()
+
+    def _show_step(self) -> None:
+        step = self.current_step.get()
+        for value, panel in self.step_panels.items():
+            if value == step:
+                panel.pack(fill="x", padx=20, pady=(0, 10))
+            else:
+                panel.pack_forget()
+        self._update_step_access()
+        self._update_process_button()
+
+    def _midi_ready(self) -> bool:
+        """The MIDI/Device steps unlock only after processing produced a file."""
+        return bool(self.fused_notes) and self.fused_midi_path is not None
+
+    def _update_step_access(self) -> None:
+        ready = self._midi_ready()
+        for value in ("midi", "device"):
+            radio = self.step_radios.get(value)
+            if radio is not None:
+                radio.configure(state="normal" if ready else "disabled")
+        self._update_nav_buttons()
+
+    def _update_nav_buttons(self) -> None:
+        index = self.steps.index(self.current_step.get())
+        on_amt = self.current_step.get() == "amt"
+        for widget in (self.back_btn, self.next_btn, self.process_btn):
+            widget.pack_forget()
+        if index > 0:
+            self.back_btn.pack(side="left")
+        if index < len(self.steps) - 1:
+            # The AMT -> MIDI transition is gated behind processing.
+            if not (on_amt and not self._midi_ready()):
+                self.next_btn.pack(side="right")
+            if on_amt:
+                self.process_btn.pack(side="right", padx=(0, 8))
+
+    def _next_step(self) -> None:
+        index = self.steps.index(self.current_step.get())
+        if index < len(self.steps) - 1:
+            self.current_step.set(self.steps[index + 1])
+            self._show_step()
+
+    def _previous_step(self) -> None:
+        index = self.steps.index(self.current_step.get())
+        if index > 0:
+            self.current_step.set(self.steps[index - 1])
+            self._show_step()
 
     def browse_file(self) -> None:
         current_file = self.input_panel.file_path.get()
@@ -190,14 +326,18 @@ class KiviPianoApp(ctk.CTk):
             )
             return
         separator_name, stem_name = selection
-        amt_model = self.amt_panel.selection()
-        if amt_model is None:
+        amt_selection = self.amt_panel.selection()
+        if not amt_selection:
             messagebox.showwarning(
-                "Select a transcription model",
-                "Select exactly one available AMT model.",
+                "Select transcription models",
+                "Select at least one available AMT model.",
                 parent=self,
             )
             return
+        amt_models = tuple(
+            ModelWeight(name=name, weight=weight)
+            for name, weight in amt_selection.items()
+        )
 
         selected_tab = self.input_panel.selected_tab
         if selected_tab == "YouTube":
@@ -249,22 +389,11 @@ class KiviPianoApp(ctk.CTk):
             save_for_later=save_for_later,
             separator=separator_name,
             stem=stem_name,
-            amt_model=amt_model,
+            amt_models=amt_models,
         )
         self.processing = True
         self.process_btn.configure(state="disabled")
-        self.status_lbl.configure(
-            text=(
-                f"Checking URL, downloading audio, extracting the {stem_name} "
-                f"stem with {separator_name.title()}, then transcribing with "
-                f"{AMT_MODELS[amt_model]}..."
-                if source_mode == "youtube"
-                else f"Extracting the {stem_name} stem with "
-                f"{separator_name.title()}, then transcribing with "
-                f"{AMT_MODELS[amt_model]}..."
-            ),
-            text_color="gray",
-        )
+        self.status_lbl.configure(text="Processing...", text_color="gray")
         self.progress.pack(fill="x", padx=25, pady=(0, 8))
         self.progress.start()
         try:
@@ -281,14 +410,24 @@ class KiviPianoApp(ctk.CTk):
 
     def _process_audio(self, request: ProcessingRequest) -> None:
         try:
-            result = self.processing_service.process(request)
+            result = self.processing_service.process(
+                request,
+                on_progress=self.progress_messages.put,
+            )
             self.processing_results.put(
-                (True, result.message, result.selected_audio, result.output_path)
+                (
+                    True,
+                    result.message,
+                    result.selected_audio,
+                    result.output_path,
+                    result.midi_path,
+                )
             )
         except Exception as exc:
             self.processing_results.put((False, str(exc), None, None))
 
     def _poll_processing_result(self) -> None:
+        self._drain_progress_messages()
         try:
             result = self.processing_results.get_nowait()
         except Empty:
@@ -296,12 +435,21 @@ class KiviPianoApp(ctk.CTk):
             return
         self._finish_processing(*result)
 
+    def _drain_progress_messages(self) -> None:
+        while True:
+            try:
+                message = self.progress_messages.get_nowait()
+            except Empty:
+                return
+            self.status_lbl.configure(text=message, text_color="gray")
+
     def _finish_processing(
         self,
         succeeded: bool,
         message: str,
         selected_audio: Path | None = None,
         output_file: Path | None = None,
+        midi_path: Path | None = None,
     ) -> None:
         self.progress.stop()
         self.progress.pack_forget()
@@ -313,15 +461,22 @@ class KiviPianoApp(ctk.CTk):
         if not succeeded:
             messagebox.showerror("Audio processing failed", message, parent=self)
             self.output_file = None
+            self.fused_midi_path = None
             self.open_output_btn.configure(state="disabled")
         else:
             self.output_file = output_file
+            self.fused_midi_path = midi_path
             self.open_output_btn.configure(state="normal")
             if selected_audio:
                 self.input_panel.file_path.set(str(selected_audio))
                 self.input_panel.tabs.set("Audio File")
                 self.refresh_library()
+            self._load_fused_notes(output_file)
         self._update_process_button()
+        self._update_step_access()
+        if succeeded:
+            self.current_step.set("midi")
+            self._show_step()
 
     def open_output_folder(self) -> None:
         if self.output_file is None:
@@ -335,3 +490,87 @@ class KiviPianoApp(ctk.CTk):
                 f"{exc}\n\nOutput folder:\n{output_folder}",
                 parent=self,
             )
+
+    def _load_fused_notes(self, fused_csv: Path | None) -> None:
+        if fused_csv is None:
+            self.fused_notes = []
+            self.midi_panel.set_notes([])
+            self.device_panel.set_notes([])
+            return
+        try:
+            notes = read_fused_csv(fused_csv)
+        except Exception as exc:
+            notes = []
+            self.status_lbl.configure(
+                text=f"Done, but the fused notes could not be previewed: {exc}",
+                text_color="red",
+            )
+        self.fused_notes = notes
+        self.midi_panel.set_notes(notes)
+        self.device_panel.set_notes(notes)
+
+    def download_midi(self) -> None:
+        if not self.fused_notes or self.fused_midi_path is None:
+            messagebox.showwarning(
+                "No MIDI yet",
+                "Process audio first to produce a MIDI file.",
+                parent=self,
+            )
+            return
+        target = filedialog.asksaveasfilename(
+            title="Save MIDI",
+            defaultextension=".mid",
+            initialfile=self.fused_midi_path.name,
+            filetypes=[("MIDI files", "*.mid"), ("All files", "*.*")],
+        )
+        if not target:
+            return
+        try:
+            write_tempo_midi(
+                self.fused_notes,
+                Path(target),
+                self.playback_config.export_settings(),
+            )
+        except Exception as exc:
+            messagebox.showerror("Could not save MIDI", str(exc), parent=self)
+            return
+        self.status_lbl.configure(text=f"Saved MIDI: {target}", text_color="green")
+
+    def send_to_device(self) -> None:
+        if not self.fused_notes:
+            messagebox.showwarning(
+                "No MIDI yet",
+                "Process audio first to produce a MIDI file.",
+                parent=self,
+            )
+            return
+        settings = self.playback_config.export_settings()
+        loop = self.playback_config.loop_range()
+        events = build_device_events(
+            self.fused_notes,
+            settings,
+            prepare_ms=self.playback_config.prepare_ms.get(),
+            loop=loop,
+        )
+        if not events:
+            messagebox.showwarning(
+                "Empty selection",
+                "No notes start inside the selected fragment.",
+                parent=self,
+            )
+            return
+        try:
+            self.device_transport.send(events)
+        except Exception as exc:
+            messagebox.showerror("Could not send to device", str(exc), parent=self)
+            return
+        scope = (
+            f"fragment {loop[0]:.2f}s-{loop[1]:.2f}s"
+            if loop
+            else "whole piece"
+        )
+        self.status_lbl.configure(
+            text=f"Sent {len(events)} events to the edge device "
+            f"({scope}, preview transport).",
+            text_color="green",
+        )

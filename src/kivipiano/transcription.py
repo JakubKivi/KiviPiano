@@ -17,7 +17,6 @@ AMT_MODELS = {
     "basic_pitch": "Spotify Basic Pitch",
     "magenta": "Google Magenta (Onsets & Frames)",
     "bytedance": "ByteDance Piano Transcription",
-    "mt3": "Google MT3",
     "omnizart": "Omnizart",
 }
 
@@ -45,11 +44,6 @@ def amt_model_available(model_name: str, model_dir: Path) -> bool:
     if model_name == "bytedance":
         checkpoint = model_path / "bytedance" / "piano_transcription.pth"
         return image_available(model_name) and checkpoint.is_file()
-    if model_name == "mt3":
-        checkpoints = model_path / "mt3" / "checkpoints"
-        return image_available(model_name) and any(
-            checkpoints.rglob("checkpoint*")
-        )
     if model_name == "omnizart":
         marker = model_path / "omnizart" / ".checkpoints-ready"
         return image_available(model_name) and marker.is_file()
@@ -122,10 +116,6 @@ def transcribe_piano(
         )
     elif model_name == "bytedance":
         midi_data = _predict_bytedance(
-            source, Path(model_dir).expanduser().resolve()
-        )
-    elif model_name == "mt3":
-        midi_data = _predict_mt3(
             source, Path(model_dir).expanduser().resolve()
         )
     else:
@@ -230,27 +220,6 @@ def _predict_bytedance(audio_path: Path, model_dir: Path) -> MidiData:
         return pretty_midi.PrettyMIDI(str(midi_path))
 
 
-def _predict_mt3(audio_path: Path, model_dir: Path) -> MidiData:
-    try:
-        import librosa
-        import note_seq
-        import pretty_midi
-        from kivipiano.mt3_backend import MT3InferenceModel
-    except ImportError as exc:
-        raise RuntimeError("Google MT3 is unavailable in its container.") from exc
-
-    checkpoint_dir = model_dir / "mt3" / "checkpoints" / "mt3"
-    if not any(checkpoint_dir.rglob("checkpoint*")):
-        raise RuntimeError("The Google MT3 checkpoint is not installed. Run `make install`.")
-    audio, _ = librosa.load(str(audio_path), sr=16000, mono=True)
-    inference = MT3InferenceModel(checkpoint_dir)
-    sequence = inference(audio)
-    with tempfile.TemporaryDirectory(prefix="kivipiano-mt3-") as temp_dir:
-        midi_path = Path(temp_dir) / "transcription.mid"
-        note_seq.sequence_proto_to_midi_file(sequence, str(midi_path))
-        return pretty_midi.PrettyMIDI(str(midi_path))
-
-
 def _predict_omnizart(audio_path: Path) -> MidiData:
     try:
         import pretty_midi
@@ -304,21 +273,7 @@ def _magenta_executable() -> Path | None:
             f"{executable}"
         )
 
-    project_root = Path(__file__).resolve().parents[2]
-    script_name = "onsets_frames_transcription_transcribe"
-    if os.name == "nt":
-        script_name += ".exe"
-        local_executable = (
-            project_root / ".venv-magenta" / "Scripts" / script_name
-        )
-    else:
-        local_executable = (
-            project_root / ".venv-magenta" / "bin" / script_name
-        )
-    if local_executable.is_file():
-        return local_executable
-
-    located = shutil.which(script_name)
+    located = shutil.which("onsets_frames_transcription_transcribe")
     return Path(located) if located else None
 
 

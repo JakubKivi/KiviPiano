@@ -34,13 +34,6 @@ services:
       dockerfile: docker/Dockerfile
       args:
         BACKEND: bytedance
-  mt3:
-    image: kivipiano-mt3:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      args:
-        BACKEND: mt3
   omnizart:
     image: kivipiano-omnizart:latest
     build:

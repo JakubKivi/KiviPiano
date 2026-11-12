@@ -1,6 +1,7 @@
-# Magenta's inference runtime with versions compatible with Python 3.10.
-# tensor2tensor is installed separately with `--no-deps` (see Makefile) because
-# its unpinned TensorFlow requirement would conflict with the TF 2.9.1 below.
+# Magenta's inference runtime, installed inside the magenta container image
+# (Python 3.10). The desktop app runs on Python 3.11 in its own `.venv`.
+# tensor2tensor is installed separately with `--no-deps` (see Dockerfile)
+# because its unpinned TensorFlow requirement would conflict with TF 2.9.1.
 absl-py==1.2.0
 dm-sonnet==2.0.0
 imageio==2.20.0

@@ -3,7 +3,6 @@
 import argparse
 import os
 from pathlib import Path
-import subprocess
 from urllib.request import urlretrieve
 
 
@@ -18,9 +17,7 @@ def _prepare(model_name: str, model_dir: Path) -> None:
         download_demucs_model,
         download_spleeter_model,
     )
-    from kivipiano.transcription import (
-        download_magenta_checkpoint,
-    )
+    from kivipiano.transcription import download_magenta_checkpoint
 
     if model_name == "demucs":
         download_demucs_model(model_dir)
@@ -37,49 +34,11 @@ def _prepare(model_name: str, model_dir: Path) -> None:
             urlretrieve(BYTEDANCE_CHECKPOINT_URL, checkpoint)
         if checkpoint.stat().st_size < 160_000_000:
             raise RuntimeError("The ByteDance checkpoint download is incomplete.")
-    elif model_name == "mt3":
-        checkpoint_dir = model_dir / "mt3" / "checkpoints"
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        if not any(checkpoint_dir.rglob("checkpoint*")):
-            result = subprocess.run(
-                [
-                    "gsutil",
-                    "-m",
-                    "cp",
-                    "-r",
-                    "gs://mt3/checkpoints/mt3",
-                    str(checkpoint_dir),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode:
-                details = (result.stderr or result.stdout).strip()
-                raise RuntimeError(
-                    "Could not download the Google MT3 checkpoint"
-                    + (f":\n{details[-2000:]}" if details else ".")
-                )
-        if not any(checkpoint_dir.rglob("checkpoint*")):
-            raise RuntimeError("The Google MT3 checkpoint was not downloaded.")
     elif model_name == "omnizart":
+        # The music_piano checkpoint is baked into the image at build time
+        # (see docker/Dockerfile), so install only records a ready marker.
         marker = model_dir / "omnizart" / ".checkpoints-ready"
         if not marker.is_file():
-            env = os.environ.copy()
-            env["HOME"] = str(model_dir / "omnizart")
-            result = subprocess.run(
-                ["omnizart", "download-checkpoints"],
-                capture_output=True,
-                text=True,
-                check=False,
-                env=env,
-            )
-            if result.returncode:
-                details = (result.stderr or result.stdout).strip()
-                raise RuntimeError(
-                    "Could not download Omnizart checkpoints"
-                    + (f":\n{details[-2000:]}" if details else ".")
-                )
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
     else:

@@ -5,11 +5,9 @@ VENV_PYTHON = $(VENV_DIR)/Scripts/python.exe
 INSTALL_MARKER = $(VENV_DIR)/.installed
 DOCKER_INSTALL_MARKER = .docker-installed
 
-# App name for the executable
-APP_NAME = KiviPiano
 MAIN_SCRIPT = src/main.py
 
-.PHONY: install prepare-models docker-build run build test clean
+.PHONY: install prepare-models docker-build run test clean
 
 $(INSTALL_MARKER): pyproject.toml requirements.txt
 	$(PYTHON311) -m venv $(VENV_DIR)
@@ -34,14 +32,8 @@ docker-build: $(DOCKER_INSTALL_MARKER)
 run: install
 	$(VENV_PYTHON) $(MAIN_SCRIPT)
 
-build: install
-	$(VENV_PYTHON) -m PyInstaller --noconfirm --onedir --windowed --collect-all yt_dlp --name "$(APP_NAME)" $(MAIN_SCRIPT)
-
 test: $(INSTALL_MARKER)
 	$(VENV_PYTHON) -m unittest discover -s tests -v
 
 clean:
-	rm -rf build/
-	rm -rf dist/
-	rm -f $(APP_NAME).spec
 	rm -rf __pycache__/
