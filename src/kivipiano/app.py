@@ -1,5 +1,4 @@
 import os
-import tempfile
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
@@ -8,7 +7,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from kivipiano.config import AppPaths
-from kivipiano.fusion import FusedNote, read_fused_csv
+from kivipiano.fusion import FusedNote, read_fused_csv, write_fused_csv, write_fused_midi
 from kivipiano.media import list_saved_audio
 from kivipiano.midi_export import (
     DeviceTransport,
@@ -16,6 +15,7 @@ from kivipiano.midi_export import (
     build_device_events,
     write_tempo_midi,
 )
+from kivipiano.musical_context import context_available
 from kivipiano.separation import demucs_available, spleeter_available
 from kivipiano.services.processing import (
     AudioProcessingService,
@@ -25,7 +25,9 @@ from kivipiano.services.processing import (
 from kivipiano.transcription import AMT_MODELS, amt_model_available
 from kivipiano.ui.components import (
     AMTPanel,
+    ContextPanel,
     DevicePanel,
+    FiltersPanel,
     InputPanel,
     MidiPanel,
     PlaybackConfig,
@@ -54,13 +56,14 @@ class KiviPianoApp(ctk.CTk):
         self.minsize(680, 780)
 
         self.processing_results: Queue[
-            tuple[bool, str, Path | None, Path | None, Path | None]
+            tuple[bool, str, Path | None, Path | None, Path | None, tuple | None]
         ] = Queue()
         self.progress_messages: Queue[str] = Queue()
         self.processing = False
         self.output_file: Path | None = None
         self.fused_midi_path: Path | None = None
         self.fused_notes: list[FusedNote] = []
+        self.raw_fused_notes: list[FusedNote] = []
         self.device_transport: DeviceTransport = LoggingTransport()
 
         self._build_ui()
@@ -83,13 +86,23 @@ class KiviPianoApp(ctk.CTk):
             font=ctk.CTkFont(size=13),
         ).pack(pady=(0, 12))
 
-        self.steps = ["file", "separator", "amt", "midi", "device"]
+        self.steps = [
+            "file",
+            "separator",
+            "amt",
+            "context",
+            "filters",
+            "midi",
+            "device",
+        ]
         self.step_labels = {
             "file": "1. File",
             "separator": "2. Separator",
             "amt": "3. AMT models",
-            "midi": "4. MIDI",
-            "device": "5. Device",
+            "context": "4. Beats & Chords",
+            "filters": "5. Filters",
+            "midi": "6. MIDI",
+            "device": "7. Device",
         }
         self.current_step = ctk.StringVar(value=self.steps[0])
 
@@ -132,7 +145,18 @@ class KiviPianoApp(ctk.CTk):
                 for model_name in AMT_MODELS
             },
         )
+        self.context_panel = ContextPanel(
+            self.step_container,
+            on_change=self._update_process_button,
+            available=context_available(),
+        )
         self.playback_config = PlaybackConfig()
+        self.filters_panel = FiltersPanel(
+            self.step_container,
+            config=self.playback_config,
+            on_change=self._on_filters_changed,
+            on_apply=self._apply_filters,
+        )
         self.midi_panel = MidiPanel(
             self.step_container,
             config=self.playback_config,
@@ -149,6 +173,8 @@ class KiviPianoApp(ctk.CTk):
             "file": self.input_panel,
             "separator": self.separator_panel,
             "amt": self.amt_panel,
+            "context": self.context_panel,
+            "filters": self.filters_panel,
             "midi": self.midi_panel,
             "device": self.device_panel,
         }
@@ -217,12 +243,12 @@ class KiviPianoApp(ctk.CTk):
         self._update_process_button()
 
     def _midi_ready(self) -> bool:
-        """The MIDI/Device steps unlock only after processing produced a file."""
-        return bool(self.fused_notes) and self.fused_midi_path is not None
+        """The Filters/MIDI/Device steps unlock after processing produced a file."""
+        return self.fused_midi_path is not None
 
     def _update_step_access(self) -> None:
         ready = self._midi_ready()
-        for value in ("midi", "device"):
+        for value in ("filters", "midi", "device"):
             radio = self.step_radios.get(value)
             if radio is not None:
                 radio.configure(state="normal" if ready else "disabled")
@@ -230,21 +256,23 @@ class KiviPianoApp(ctk.CTk):
 
     def _update_nav_buttons(self) -> None:
         index = self.steps.index(self.current_step.get())
-        on_amt = self.current_step.get() == "amt"
+        step = self.current_step.get()
         for widget in (self.back_btn, self.next_btn, self.process_btn):
             widget.pack_forget()
         if index > 0:
             self.back_btn.pack(side="left")
         if index < len(self.steps) - 1:
-            # The AMT -> MIDI transition is gated behind processing.
-            if not (on_amt and not self._midi_ready()):
+            # The Context -> Filters transition is gated behind processing.
+            if not (step == "context" and not self._midi_ready()):
                 self.next_btn.pack(side="right")
-            if on_amt:
+            if step in ("amt", "context"):
                 self.process_btn.pack(side="right", padx=(0, 8))
 
     def _next_step(self) -> None:
         index = self.steps.index(self.current_step.get())
         if index < len(self.steps) - 1:
+            if self.current_step.get() == "filters":
+                self._apply_filters()
             self.current_step.set(self.steps[index + 1])
             self._show_step()
 
@@ -298,6 +326,9 @@ class KiviPianoApp(ctk.CTk):
         ready = (
             self.separator_panel.selection() is not None
             and self.amt_panel.selection() is not None
+            and not self.amt_panel.validation_errors()
+            and not self.context_panel.validation_errors()
+            and not self.filters_panel.validation_errors()
         )
         selected_tab = self.input_panel.selected_tab
         if selected_tab == "YouTube":
@@ -332,6 +363,12 @@ class KiviPianoApp(ctk.CTk):
                 "Select transcription models",
                 "Select at least one available AMT model.",
                 parent=self,
+            )
+            return
+        amt_errors = self.amt_panel.validation_errors()
+        if amt_errors:
+            messagebox.showwarning(
+                "Check fusion settings", amt_errors[0], parent=self
             )
             return
         amt_models = tuple(
@@ -390,6 +427,9 @@ class KiviPianoApp(ctk.CTk):
             separator=separator_name,
             stem=stem_name,
             amt_models=amt_models,
+            fusion=self.amt_panel.fusion_config(),
+            context=self.context_panel.context_config(),
+            filters=self.filters_panel.filter_config(),
         )
         self.processing = True
         self.process_btn.configure(state="disabled")
@@ -421,10 +461,11 @@ class KiviPianoApp(ctk.CTk):
                     result.selected_audio,
                     result.output_path,
                     result.midi_path,
+                    result.raw_notes,
                 )
             )
         except Exception as exc:
-            self.processing_results.put((False, str(exc), None, None))
+            self.processing_results.put((False, str(exc), None, None, None, None))
 
     def _poll_processing_result(self) -> None:
         self._drain_progress_messages()
@@ -450,6 +491,7 @@ class KiviPianoApp(ctk.CTk):
         selected_audio: Path | None = None,
         output_file: Path | None = None,
         midi_path: Path | None = None,
+        raw_notes: tuple[FusedNote, ...] | None = None,
     ) -> None:
         self.progress.stop()
         self.progress.pack_forget()
@@ -467,6 +509,8 @@ class KiviPianoApp(ctk.CTk):
             self.output_file = output_file
             self.fused_midi_path = midi_path
             self.open_output_btn.configure(state="normal")
+            self.raw_fused_notes = list(raw_notes or [])
+            self.filters_panel.set_raw_notes(self.raw_fused_notes)
             if selected_audio:
                 self.input_panel.file_path.set(str(selected_audio))
                 self.input_panel.tabs.set("Audio File")
@@ -475,7 +519,7 @@ class KiviPianoApp(ctk.CTk):
         self._update_process_button()
         self._update_step_access()
         if succeeded:
-            self.current_step.set("midi")
+            self.current_step.set("filters")
             self._show_step()
 
     def open_output_folder(self) -> None:
@@ -508,6 +552,31 @@ class KiviPianoApp(ctk.CTk):
         self.fused_notes = notes
         self.midi_panel.set_notes(notes)
         self.device_panel.set_notes(notes)
+
+    def _on_filters_changed(self) -> None:
+        """Keep the MIDI/Device previews in sync with the current filters."""
+        notes = self.filters_panel.filtered_notes()
+        self.fused_notes = notes
+        self.midi_panel.set_notes(notes)
+        self.device_panel.set_notes(notes)
+
+    def _apply_filters(self) -> None:
+        if self.output_file is None or self.fused_midi_path is None:
+            return
+        notes = self.filters_panel.filtered_notes()
+        try:
+            write_fused_csv(notes, self.output_file)
+            write_fused_midi(notes, self.fused_midi_path)
+        except Exception as exc:
+            messagebox.showerror("Could not apply filters", str(exc), parent=self)
+            return
+        self.fused_notes = notes
+        self.midi_panel.set_notes(notes)
+        self.device_panel.set_notes(notes)
+        self.status_lbl.configure(
+            text=f"Applied filters: {len(notes)} notes kept.",
+            text_color="green",
+        )
 
     def download_midi(self) -> None:
         if not self.fused_notes or self.fused_midi_path is None:

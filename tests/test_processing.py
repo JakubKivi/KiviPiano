@@ -4,11 +4,20 @@ import unittest
 from pathlib import Path
 
 from kivipiano.config import AppPaths
+from kivipiano.fusion import FusionConfig
+from kivipiano.musical_context import (
+    BeatChordAnalysis,
+    ChordSegment,
+    ContextConfig,
+    chord_pitch_classes,
+)
+from kivipiano.separation import expected_stem_path
 from kivipiano.services.processing import (
     AudioProcessingService,
     ModelWeight,
     ProcessingRequest,
 )
+from kivipiano.transcription import transcription_paths
 
 
 class AudioProcessingServiceTests(unittest.TestCase):
@@ -174,6 +183,99 @@ class AudioProcessingServiceTests(unittest.TestCase):
                 self.request(amt_models=(ModelWeight("basic_pitch", 0),))
             )
 
+    def test_rejects_invalid_fusion_config(self):
+        source = self.root / "song.mp3"
+        source.touch()
+        with self.assertRaisesRegex(ValueError, "between 0 and 1"):
+            self.make_service().process(
+                self.request(
+                    source=str(source),
+                    fusion=FusionConfig(min_confidence=1.5),
+                )
+            )
+        self.assertEqual(self.calls, [])
+
+    def test_reuses_existing_artifacts_when_only_weights_change(self):
+        source = self.root / "song.mp3"
+        source.touch()
+
+        stem_path = expected_stem_path(
+            source, self.root / "KiviPiano_output", "demucs", "piano"
+        )
+        stem_path.parent.mkdir(parents=True, exist_ok=True)
+        stem_path.touch()
+        csv_path, midi_path = transcription_paths(
+            stem_path, stem_path.parent, "basic_pitch"
+        )
+        csv_path.write_text(
+            "start_time,end_time,pitch,velocity,model\n"
+            "0.1,0.2,60,90,basic_pitch\n",
+            encoding="utf-8",
+        )
+        midi_path.touch()
+
+        def fail_separate(*_args):
+            raise AssertionError("The separator should not run when the stem exists.")
+
+        def fail_transcribe(*_args):
+            raise AssertionError(
+                "The transcriber should not run when its CSV and MIDI exist."
+            )
+
+        service = AudioProcessingService(
+            self.paths,
+            separator=fail_separate,
+            transcriber=fail_transcribe,
+        )
+
+        result = service.process(
+            self.request(
+                source=str(source),
+                amt_models=(ModelWeight("basic_pitch", 3.0),),
+            )
+        )
+
+        self.assertTrue(result.output_path.is_file())
+        self.assertTrue(result.midi_path.is_file())
+        with result.output_path.open(encoding="utf-8", newline="") as csv_file:
+            row = next(csv.DictReader(csv_file))
+        self.assertEqual(row["pitch"], "60")
+
+    def test_result_exposes_unfiltered_raw_notes(self):
+        source = self.root / "song.mp3"
+        source.touch()
+
+        def separate(source_path, output_dir, model_dir, separator, stem):
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            result_path = output_path / f"{separator}_{Path(source_path).stem}_{stem}.wav"
+            result_path.touch()
+            return result_path
+
+        def transcribe(audio, output_dir, model_dir, model):
+            output_path = Path(output_dir)
+            csv_path = output_path / f"{model}.csv"
+            midi_path = output_path / f"{model}.mid"
+            csv_path.write_text(
+                "start_time,end_time,pitch,velocity,model\n"
+                "0.0,0.02,60,90,basic_pitch\n"
+                "0.1,0.3,62,90,basic_pitch\n",
+                encoding="utf-8",
+            )
+            midi_path.touch()
+            return csv_path, midi_path, 2
+
+        service = AudioProcessingService(
+            self.paths, separator=separate, transcriber=transcribe
+        )
+        result = service.process(self.request(source=str(source)))
+
+        self.assertEqual(len(result.raw_notes), 2)
+        with result.output_path.open(encoding="utf-8", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pitch"], "62")
+
     def test_fuses_selected_models_into_one_output(self):
         source = self.root / "song.mp3"
         source.touch()
@@ -198,6 +300,67 @@ class AudioProcessingServiceTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["pitch"], "60")
         self.assertEqual(rows[0]["models"], "basic_pitch;magenta")
+
+    def test_context_stage_refines_notes_between_fusion_and_filters(self):
+        source = self.root / "song.mp3"
+        source.touch()
+        analyzed = []
+
+        def separate(source_path, output_dir, model_dir, separator, stem):
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            result_path = output_path / f"{separator}_{Path(source_path).stem}_{stem}.wav"
+            result_path.touch()
+            return result_path
+
+        def transcribe(audio, output_dir, model_dir, model):
+            output_path = Path(output_dir)
+            csv_path = output_path / f"{model}.csv"
+            midi_path = output_path / f"{model}.mid"
+            csv_path.write_text(
+                "start_time,end_time,pitch,velocity,model\n"
+                "0.03,0.50,60,90,basic_pitch\n"
+                "0.25,0.40,62,90,basic_pitch\n",
+                encoding="utf-8",
+            )
+            midi_path.touch()
+            return csv_path, midi_path, 2
+
+        def analyze(audio, output_dir, model_dir):
+            analyzed.append((Path(audio).name, Path(output_dir), Path(model_dir)))
+            return BeatChordAnalysis(
+                (0.0, 0.5),
+                120.0,
+                (ChordSegment(0.0, 2.0, "C:maj", chord_pitch_classes("C:maj")),),
+            )
+
+        service = AudioProcessingService(
+            self.paths, separator=separate, transcriber=transcribe, analyzer=analyze
+        )
+        result = service.process(
+            self.request(source=str(source), context=ContextConfig(enabled=True))
+        )
+
+        self.assertEqual(len(analyzed), 1)
+        # The C note (0.03s) is snapped onto the beat; the off-beat D (0.25s)
+        # is not a C-major chord tone, so the context stage drops it.
+        with result.output_path.open(encoding="utf-8", newline="") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pitch"], "60")
+        self.assertEqual(float(rows[0]["start_time"]), 0.0)
+
+    def test_context_stage_is_skipped_when_disabled(self):
+        source = self.root / "song.mp3"
+        source.touch()
+
+        def analyze(*_args):
+            raise AssertionError("The analyzer should not run when disabled.")
+
+        service = self.make_service()
+        service._analyzer = analyze
+        result = service.process(self.request(source=str(source)))
+        self.assertTrue(result.output_path.is_file())
 
 
 if __name__ == "__main__":

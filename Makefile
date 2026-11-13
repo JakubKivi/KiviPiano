@@ -36,4 +36,4 @@ test: $(INSTALL_MARKER)
 	$(VENV_PYTHON) -m unittest discover -s tests -v
 
 clean:
-	rm -rf __pycache__/
+	$(VENV_PYTHON) -c "import pathlib, shutil; [shutil.rmtree(p, ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]"

@@ -2,7 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kivipiano.separation import _spleeter_model_cached, separate_stem
+from unittest.mock import patch
+
+from kivipiano.separation import (
+    _spleeter_model_cached,
+    expected_stem_path,
+    separate_stem,
+)
 
 
 class SeparationValidationTests(unittest.TestCase):
@@ -40,6 +46,24 @@ class SeparationValidationTests(unittest.TestCase):
                     separator_name="spleeter",
                     stem_name="guitar",
                 )
+
+    def test_reuses_an_existing_stem_without_running_the_container(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "song.mp3"
+            source.touch()
+            output_dir = root / "output"
+            stem_path = expected_stem_path(source, output_dir, "demucs", "piano")
+            stem_path.parent.mkdir(parents=True, exist_ok=True)
+            stem_path.touch()
+
+            with patch("kivipiano.separation.run_model_container") as run:
+                result = separate_stem(
+                    str(source), str(output_dir), str(root / "models")
+                )
+
+            run.assert_not_called()
+            self.assertEqual(result, stem_path)
 
     def test_spleeter_model_cached_detects_probe_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:

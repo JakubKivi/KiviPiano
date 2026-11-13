@@ -73,6 +73,22 @@ class MidiData(Protocol):
     def write(self, filename: str) -> None: ...
 
 
+def transcription_paths(
+    audio_path: str | Path, output_dir: str | Path, model_name: str
+) -> tuple[Path, Path]:
+    """Return the deterministic ``(csv_path, midi_path)`` for a transcription."""
+    source = Path(audio_path).expanduser().resolve()
+    destination = Path(output_dir).expanduser().resolve()
+    stem = f"{source.stem}_{model_name}"
+    return destination / f"{stem}.csv", destination / f"{stem}.mid"
+
+
+def _read_note_count(csv_path: Path) -> int:
+    """Count the note rows in a normalized transcription CSV."""
+    with csv_path.open(encoding="utf-8", newline="") as csv_file:
+        return sum(1 for _ in csv.DictReader(csv_file))
+
+
 def transcribe_piano(
     audio_path: str,
     output_dir: str,
@@ -87,9 +103,10 @@ def transcribe_piano(
 
     destination = Path(output_dir).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
-    stem = f"{source.stem}_{model_name}"
-    midi_path = destination / f"{stem}.mid"
-    csv_path = destination / f"{stem}.csv"
+    csv_path, midi_path = transcription_paths(source, destination, model_name)
+
+    if midi_path.is_file() and csv_path.is_file():
+        return csv_path, midi_path, _read_note_count(csv_path)
 
     if os.environ.get("KIVIPIANO_CONTAINER_WORKER") != "1":
         run_model_container(
@@ -104,9 +121,7 @@ def transcribe_piano(
                 f"The {AMT_MODELS[model_name]} container finished without "
                 "producing its MIDI and CSV files."
             )
-        with csv_path.open(encoding="utf-8", newline="") as csv_file:
-            note_count = sum(1 for _ in csv.DictReader(csv_file))
-        return csv_path, midi_path, note_count
+        return csv_path, midi_path, _read_note_count(csv_path)
 
     if model_name == "basic_pitch":
         midi_data = _predict_basic_pitch(source)

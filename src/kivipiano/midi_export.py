@@ -1,7 +1,7 @@
 """MIDI export, hand assignment, and edge-device event scheduling.
 
-Stage 4 ("MIDI") lets the user download the fused transcription with an
-explicit tempo and a right/left hand split, and stage 5 ("Device") turns the
+Stage 5 ("MIDI") lets the user download the fused transcription with an
+explicit tempo and a right/left hand split, and stage 6 ("Device") turns the
 same notes into timed LED events for an edge device. Both stages share the
 helpers in this module, which are deliberately UI-free so they can be
 unit-tested without a display.

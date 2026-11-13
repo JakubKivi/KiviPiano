@@ -41,6 +41,10 @@ def _prepare(model_name: str, model_dir: Path) -> None:
         if not marker.is_file():
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
+    elif model_name == "madmom":
+        # Madmom's beat/chord models ship inside the pip package, so there is
+        # nothing to download; install just verifies the image is usable.
+        from madmom.features.beats import RNNBeatProcessor  # noqa: F401
     else:
         raise ValueError(f"Unknown model container: {model_name}")
 
@@ -72,9 +76,17 @@ def _run_transcription(
     )
 
 
+def _run_analysis(model_name: str, audio_path: Path, output_dir: Path) -> None:
+    from kivipiano.musical_context import analyze_musical_context
+
+    analyze_musical_context(str(audio_path), str(output_dir), "/models")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=("prepare", "transcribe", "separate"))
+    parser.add_argument(
+        "operation", choices=("prepare", "transcribe", "separate", "analyze")
+    )
     parser.add_argument("model_name")
     parser.add_argument("audio_path", nargs="?", default="")
     parser.add_argument("output_dir", nargs="?", default="")
@@ -94,6 +106,8 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     if args.operation == "separate":
         _run_separation(args.model_name, audio_path, output_dir, args.stem_name)
+    elif args.operation == "analyze":
+        _run_analysis(args.model_name, audio_path, output_dir)
     else:
         _run_transcription(args.model_name, audio_path, output_dir)
 

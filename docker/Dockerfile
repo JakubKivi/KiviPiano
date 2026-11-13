@@ -54,6 +54,9 @@ RUN python -m pip install --no-cache-dir --upgrade pip wheel "setuptools<81" \
         python -m pip install --no-cache-dir "cython" "numpy<2" \
         && python -m pip install --no-cache-dir --no-build-isolation "numpy<2" "omnizart==0.6.0" \
         && python -c 'import urllib.request, os; d="/usr/local/lib/python3.10/site-packages/omnizart/checkpoints/music/music_piano/variables"; os.makedirs(d, exist_ok=True); urllib.request.urlretrieve("https://github.com/Music-and-Culture-Technology-Lab/omnizart/releases/download/checkpoints-20211001/music_piano@variables.data-00000-of-00001", os.path.join(d, "variables.data-00000-of-00001"))' ;; \
+      madmom) \
+        python -m pip install --no-cache-dir "numpy<2" "scipy" "cython" \
+        && python -m pip install --no-cache-dir --no-build-isolation "madmom==0.16.1" ;; \
       *) echo "Unsupported BACKEND: $BACKEND" >&2; exit 2 ;; \
     esac
 

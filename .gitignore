@@ -41,6 +41,9 @@ coverage.xml
 # Local sample audio used during development
 testMusic/
 
+# Build logs
+*.log
+
 # IDE / editor / AI assistant config
 .idea/
 .vscode/

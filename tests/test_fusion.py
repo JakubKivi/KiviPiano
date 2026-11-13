@@ -4,6 +4,7 @@ from pathlib import Path
 
 from kivipiano.fusion import (
     FusedNote,
+    FusionConfig,
     Note,
     create_fusion_strategy,
     fuse_notes,
@@ -96,6 +97,43 @@ class NoteFusionTests(unittest.TestCase):
         self.assertEqual(type(strategy).__name__, "WeightedVoteFusion")
         with self.assertRaisesRegex(ValueError, "Unknown fusion strategy"):
             create_fusion_strategy("missing")
+
+    def test_fusion_config_validation(self):
+        FusionConfig().validate()
+        FusionConfig(
+            strategy="weighted_vote", overlap_threshold=0.5, min_confidence=0.1
+        ).validate()
+        with self.assertRaises(ValueError):
+            FusionConfig(strategy="missing").validate()
+        with self.assertRaises(ValueError):
+            FusionConfig(overlap_threshold=1.5).validate()
+        with self.assertRaises(ValueError):
+            FusionConfig(min_confidence=-0.1).validate()
+
+    def test_invalid_strategy_parameters_are_rejected(self):
+        with self.assertRaises(ValueError):
+            fuse_notes(
+                {"a": [Note(0.0, 1.0, 60, 80, "a")]},
+                {"a": 1.0},
+                overlap_threshold=2.0,
+            )
+        with self.assertRaises(ValueError):
+            fuse_notes(
+                {"a": [Note(0.0, 1.0, 60, 80, "a")]},
+                {"a": 1.0},
+                min_confidence=1.5,
+            )
+
+    def test_min_confidence_filters_weak_notes(self):
+        fused = fuse_notes(
+            {
+                "a": [Note(1.0, 2.0, 60, 80, "a")],
+                "b": [Note(3.0, 4.0, 67, 80, "b")],
+            },
+            {"a": 3.0, "b": 1.0},
+            min_confidence=0.5,
+        )
+        self.assertEqual([note.pitch for note in fused], [60])
 
     def test_read_notes_csv(self):
         with tempfile.TemporaryDirectory() as temp_dir:

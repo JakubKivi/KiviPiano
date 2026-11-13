@@ -49,6 +49,40 @@ class ModelPrediction:
     notes: tuple[Note, ...]
 
 
+def _validate_fraction(name: str, value: float) -> None:
+    """Raise unless ``value`` is a finite number in the ``[0, 1]`` range."""
+    if not isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} must be a number between 0 and 1.")
+
+
+@dataclass(frozen=True)
+class FusionConfig:
+    """User-facing settings that control how per-model notes are fused.
+
+    The defaults mirror :class:`WeightedVoteFusion`. ``validate`` rejects
+    out-of-range values so the UI can surface problems before processing starts,
+    and ``strategy_kwargs`` maps the fields onto the strategy constructor.
+    """
+
+    strategy: str = "weighted_vote"
+    overlap_threshold: float = 0.25
+    min_confidence: float = 0.0
+
+    def validate(self) -> None:
+        if self.strategy not in FUSION_STRATEGIES:
+            raise ValueError(f"Unknown fusion strategy: {self.strategy}")
+        _validate_fraction("overlap_threshold", self.overlap_threshold)
+        _validate_fraction("min_confidence", self.min_confidence)
+
+    def strategy_kwargs(self) -> dict[str, float]:
+        """Return the keyword arguments for the configured strategy."""
+        self.validate()
+        return {
+            "overlap_threshold": self.overlap_threshold,
+            "min_confidence": self.min_confidence,
+        }
+
+
 class FusionStrategy(Protocol):
     """Combines per-model note predictions into one consensus note set.
 
@@ -168,6 +202,8 @@ class WeightedVoteFusion:
     def __init__(
         self, overlap_threshold: float = 0.25, min_confidence: float = 0.0
     ) -> None:
+        _validate_fraction("overlap_threshold", overlap_threshold)
+        _validate_fraction("min_confidence", min_confidence)
         self.overlap_threshold = overlap_threshold
         self.min_confidence = min_confidence
 

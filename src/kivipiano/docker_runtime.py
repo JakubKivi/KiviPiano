@@ -12,6 +12,7 @@ MODEL_IMAGES = {
     "magenta": "kivipiano-magenta:latest",
     "bytedance": "kivipiano-bytedance:latest",
     "omnizart": "kivipiano-omnizart:latest",
+    "madmom": "kivipiano-madmom:latest",
 }
 
 
@@ -44,7 +45,7 @@ def run_model_container(
     image = MODEL_IMAGES.get(model_name)
     if image is None:
         raise ValueError(f"Unknown model container: {model_name}")
-    if operation not in {"prepare", "transcribe", "separate"}:
+    if operation not in {"prepare", "transcribe", "separate", "analyze"}:
         raise ValueError(f"Unknown container operation: {operation}")
 
     model_path = Path(model_dir).expanduser().resolve()

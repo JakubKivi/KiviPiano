@@ -124,6 +124,21 @@ def _configure_ffmpeg(require_ffprobe: bool = True) -> None:
     )
 
 
+def expected_stem_path(
+    audio_path: str | Path,
+    output_dir: str | Path,
+    separator_name: str,
+    stem_name: str,
+) -> Path:
+    """Return the deterministic path ``separate_stem`` writes for the stem."""
+    source = Path(audio_path).expanduser().resolve()
+    output_path = Path(output_dir).expanduser().resolve()
+    stem_dir = output_path / (
+        DEMUCS_PIANO_MODEL if separator_name == "demucs" else "spleeter_5stems"
+    )
+    return stem_dir / f"{separator_name}_{source.stem}_{stem_name}.wav"
+
+
 def separate_stem(
     audio_path: str,
     output_dir: str,
@@ -148,6 +163,10 @@ def separate_stem(
     output_path.mkdir(parents=True, exist_ok=True)
     model_path.mkdir(parents=True, exist_ok=True)
 
+    stem_path = expected_stem_path(source, output_path, separator_name, stem_name)
+    if stem_path.is_file():
+        return stem_path
+
     if os.environ.get("KIVIPIANO_CONTAINER_WORKER") != "1":
         run_model_container(
             separator_name,
@@ -157,12 +176,6 @@ def separate_stem(
             output_path,
             stem_name,
         )
-        stem_dir = (
-            output_path / DEMUCS_PIANO_MODEL
-            if separator_name == "demucs"
-            else output_path / "spleeter_5stems"
-        )
-        stem_path = stem_dir / f"{separator_name}_{source.stem}_{stem_name}.wav"
         if not stem_path.is_file():
             raise RuntimeError(
                 f"The {separator_name} container finished without producing "
@@ -201,9 +214,8 @@ def separate_stem(
         if stem is None:
             raise RuntimeError(f"Demucs did not return a {stem_name} stem.")
 
-        stem_dir = output_path / DEMUCS_PIANO_MODEL
+        stem_dir = stem_path.parent
         stem_dir.mkdir(parents=True, exist_ok=True)
-        stem_path = stem_dir / f"demucs_{source.stem}_{stem_name}.wav"
         save_audio(
             stem,
             str(stem_path),
@@ -241,9 +253,8 @@ def separate_stem(
         if stem is None:
             raise RuntimeError(f"Spleeter did not return a {stem_name} stem.")
 
-        stem_dir = output_path / "spleeter_5stems"
+        stem_dir = stem_path.parent
         stem_dir.mkdir(parents=True, exist_ok=True)
-        stem_path = stem_dir / f"spleeter_{source.stem}_{stem_name}.wav"
         audio_adapter.save(stem_path, stem, sample_rate, codec=Codec.WAV)
         return stem_path
 

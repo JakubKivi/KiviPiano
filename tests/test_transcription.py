@@ -78,6 +78,30 @@ class TranscriptionTests(unittest.TestCase):
             ],
         )
 
+    def test_reuses_an_existing_transcription_without_running_the_container(self):
+        output_dir = self.root / "output"
+        csv_path = output_dir / f"{self.audio_path.stem}_basic_pitch.csv"
+        midi_path = output_dir / f"{self.audio_path.stem}_basic_pitch.mid"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        csv_path.write_text(
+            "start_time,end_time,pitch,velocity,model\n"
+            "0.1,0.2,60,90,basic_pitch\n"
+            "0.3,0.4,64,80,basic_pitch\n",
+            encoding="utf-8",
+        )
+        midi_path.write_bytes(b"midi")
+
+        with patch("kivipiano.transcription.run_model_container") as run:
+            result_csv, result_midi, note_count = transcribe_piano(
+                str(self.audio_path),
+                str(output_dir),
+                str(self.root / "models"),
+            )
+
+        run.assert_not_called()
+        self.assertEqual((result_csv, result_midi), (csv_path, midi_path))
+        self.assertEqual(note_count, 2)
+
     def test_rejects_unknown_transcription_model(self):
         with self.assertRaisesRegex(ValueError, "Unknown transcription model"):
             transcribe_piano(

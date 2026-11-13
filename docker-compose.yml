@@ -41,3 +41,10 @@ services:
       dockerfile: docker/Dockerfile
       args:
         BACKEND: omnizart
+  madmom:
+    image: kivipiano-madmom:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BACKEND: madmom
