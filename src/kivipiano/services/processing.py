@@ -58,6 +58,9 @@ class ProcessingRequest:
     fusion: FusionConfig = field(default_factory=FusionConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     filters: FilterConfig = field(default_factory=FilterConfig)
+    # Force reload: delete the stored result of that step and recompute it.
+    force_separation: bool = False
+    force_transcription: bool = False
 
 
 @dataclass(frozen=True)
@@ -134,7 +137,12 @@ class AudioProcessingService:
         note_counts: dict[str, int] = {}
         for entry in request.amt_models:
             notes_by_model[entry.name], note_counts[entry.name] = (
-                self._transcribe_reusing(output_path, entry.name, report)
+                self._transcribe_reusing(
+                    output_path,
+                    entry.name,
+                    report,
+                    force=request.force_transcription,
+                )
             )
 
         report("Fusing notes...")
@@ -147,7 +155,9 @@ class AudioProcessingService:
 
         if request.context.enabled:
             report("Detecting beats and chords...")
-            analysis = self._analyze_reusing(output_path, report)
+            analysis = self._analyze_reusing(
+                output_path, report, force=request.force_transcription
+            )
             report("Refining notes against the beat/chord context...")
             raw_notes = refine_notes(raw_notes, analysis, request.context)
 
@@ -203,6 +213,7 @@ class AudioProcessingService:
             str(self.paths.model_dir),
             request.separator,
             request.stem,
+            force=request.force_separation,
         )
 
     def _separate_reusing(
@@ -216,6 +227,8 @@ class AudioProcessingService:
         stem_path = expected_stem_path(
             source_path, output_dir, request.separator, request.stem
         )
+        if request.force_separation and stem_path.is_file():
+            stem_path.unlink()
         if stem_path.is_file():
             report(
                 f"Reusing the existing {request.stem} stem "
@@ -229,12 +242,20 @@ class AudioProcessingService:
         return self._separate(source_path, output_dir, request)
 
     def _transcribe_reusing(
-        self, stem_path: Path, model_name: str, report: Callable[[str], None]
+        self,
+        stem_path: Path,
+        model_name: str,
+        report: Callable[[str], None],
+        force: bool = False,
     ) -> tuple[list, int]:
         """Return ``(notes, note_count)``, reusing an existing transcription."""
         csv_path, midi_path = transcription_paths(
             stem_path, stem_path.parent, model_name
         )
+        if force:
+            for stored in (csv_path, midi_path):
+                if stored.is_file():
+                    stored.unlink()
         if midi_path.is_file() and csv_path.is_file():
             report(f"Reusing the existing {AMT_MODELS[model_name]} transcription.")
             notes = read_notes_csv(csv_path)
@@ -245,19 +266,24 @@ class AudioProcessingService:
             str(stem_path.parent),
             str(self.paths.model_dir),
             model_name,
+            force=force,
         )
         return read_notes_csv(csv_path), note_count
 
     def _analyze_reusing(
-        self, stem_path: Path, report: Callable[[str], None]
+        self,
+        stem_path: Path,
+        report: Callable[[str], None],
+        force: bool = False,
     ) -> BeatChordAnalysis:
         """Return the beat/chord analysis, reusing a previous one when present."""
         json_path = context_path(stem_path, stem_path.parent)
-        if json_path.is_file():
+        if json_path.is_file() and not force:
             report("Reusing the existing beat/chord analysis.")
             return read_context(json_path)
         return self._analyzer(
             str(stem_path),
             str(stem_path.parent),
             str(self.paths.model_dir),
+            force=force,
         )

@@ -42,7 +42,7 @@ class AudioProcessingServiceTests(unittest.TestCase):
         return ProcessingRequest(**values)
 
     def make_service(self, downloader=None):
-        def separate(source, output_dir, model_dir, separator, stem):
+        def separate(source, output_dir, model_dir, separator, stem, force=False):
             source_path = Path(source)
             output_path = Path(output_dir)
             self.assertTrue(source_path.is_file())
@@ -54,7 +54,7 @@ class AudioProcessingServiceTests(unittest.TestCase):
             )
             return result_path
 
-        def transcribe(audio, output_dir, model_dir, model):
+        def transcribe(audio, output_dir, model_dir, model, force=False):
             audio_path = Path(audio)
             self.assertTrue(audio_path.is_file())
             output_path = Path(output_dir)
@@ -245,14 +245,14 @@ class AudioProcessingServiceTests(unittest.TestCase):
         source = self.root / "song.mp3"
         source.touch()
 
-        def separate(source_path, output_dir, model_dir, separator, stem):
+        def separate(source_path, output_dir, model_dir, separator, stem, force=False):
             output_path = Path(output_dir)
             output_path.mkdir(parents=True, exist_ok=True)
             result_path = output_path / f"{separator}_{Path(source_path).stem}_{stem}.wav"
             result_path.touch()
             return result_path
 
-        def transcribe(audio, output_dir, model_dir, model):
+        def transcribe(audio, output_dir, model_dir, model, force=False):
             output_path = Path(output_dir)
             csv_path = output_path / f"{model}.csv"
             midi_path = output_path / f"{model}.mid"
@@ -306,14 +306,14 @@ class AudioProcessingServiceTests(unittest.TestCase):
         source.touch()
         analyzed = []
 
-        def separate(source_path, output_dir, model_dir, separator, stem):
+        def separate(source_path, output_dir, model_dir, separator, stem, force=False):
             output_path = Path(output_dir)
             output_path.mkdir(parents=True, exist_ok=True)
             result_path = output_path / f"{separator}_{Path(source_path).stem}_{stem}.wav"
             result_path.touch()
             return result_path
 
-        def transcribe(audio, output_dir, model_dir, model):
+        def transcribe(audio, output_dir, model_dir, model, force=False):
             output_path = Path(output_dir)
             csv_path = output_path / f"{model}.csv"
             midi_path = output_path / f"{model}.mid"
@@ -326,7 +326,7 @@ class AudioProcessingServiceTests(unittest.TestCase):
             midi_path.touch()
             return csv_path, midi_path, 2
 
-        def analyze(audio, output_dir, model_dir):
+        def analyze(audio, output_dir, model_dir, force=False):
             analyzed.append((Path(audio).name, Path(output_dir), Path(model_dir)))
             return BeatChordAnalysis(
                 (0.0, 0.5),
@@ -354,7 +354,7 @@ class AudioProcessingServiceTests(unittest.TestCase):
         source = self.root / "song.mp3"
         source.touch()
 
-        def analyze(*_args):
+        def analyze(*_args, **_kwargs):
             raise AssertionError("The analyzer should not run when disabled.")
 
         service = self.make_service()

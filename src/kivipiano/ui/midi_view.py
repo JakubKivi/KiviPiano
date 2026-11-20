@@ -62,20 +62,12 @@ class PianoRollView(ctk.CTkFrame):
     # -- drawing ------------------------------------------------------------
 
     def _palette(self) -> dict[str, str]:
-        if ctk.get_appearance_mode().lower() == "dark":
-            return {
-                "bg": "#1f1f1f",
-                "grid": "#3a3a3a",
-                "text": "#e4e4e7",
-                "label": "#71717a",
-                "selection": "#3b82f6",
-            }
         return {
-            "bg": "#ffffff",
-            "grid": "#e4e4e7",
-            "text": "#3f3f46",
-            "label": "#71717a",
-            "selection": "#93c5fd",
+            "bg": "#110505",
+            "grid": "#56200d",
+            "text": "#ef883f",
+            "label": "#a76242",
+            "selection": "#753b21",
         }
 
     def _plot_geometry(self) -> tuple[int, int, int, int, float, float]:

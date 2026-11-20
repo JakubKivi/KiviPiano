@@ -23,8 +23,9 @@ install: $(INSTALL_MARKER) prepare-models
 prepare-models: $(INSTALL_MARKER) $(DOCKER_INSTALL_MARKER)
 	$(VENV_PYTHON) -m kivipiano.prepare_models
 
-$(DOCKER_INSTALL_MARKER): $(INSTALL_MARKER) docker-compose.yml docker/Dockerfile $(wildcard src/kivipiano/*.py) requirements-magenta.txt requirements-spleeter.txt
-	docker compose build
+# Images are no longer built in bulk here: the app builds each one on first use
+# (see kivipiano.docker_runtime.ensure_image), so unused models cost nothing.
+$(DOCKER_INSTALL_MARKER): $(INSTALL_MARKER)
 	$(VENV_PYTHON) -c "from pathlib import Path; Path('$(DOCKER_INSTALL_MARKER)').touch()"
 
 docker-build: $(DOCKER_INSTALL_MARKER)

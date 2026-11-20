@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from kivipiano.config import AppPaths
-from kivipiano.docker_runtime import MODEL_IMAGES, run_model_container
+from kivipiano.docker_runtime import MODEL_IMAGES, image_available, run_model_container
 
 
 def prepare_all(model_dir: Path) -> None:
@@ -18,6 +18,9 @@ def prepare_all(model_dir: Path) -> None:
     model_path.mkdir(parents=True, exist_ok=True)
 
     for model_name in MODEL_IMAGES:
+        if not image_available(model_name):
+            print(f"Skipping {model_name}: its image is built when first used.")
+            continue
         print(f"Preparing {model_name} container and model...")
         run_model_container(model_name, "prepare", model_path)
 

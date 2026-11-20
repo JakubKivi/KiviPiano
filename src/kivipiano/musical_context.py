@@ -272,8 +272,19 @@ def _run_madmom_analysis(
     audio = str(audio_path)
 
     beat_activations = RNNBeatProcessor()(audio)
-    beat_array = np.asarray(DBNBeatTrackingProcessor(fps=100)(beat_activations))
-    beat_times = [float(t) for t in beat_array[:, 0]] if beat_array.size else []
+    # Wider tempo range than madmom's defaults (55-215 BPM) so slow piano music
+    # is not forced into double-tempo beats.
+    beat_array = np.asarray(
+        DBNBeatTrackingProcessor(min_bpm=40, max_bpm=220, fps=100)(beat_activations)
+    )
+    # Madmom returns (time, beat_number) rows, but a 1-D array of times is also
+    # possible (e.g. when no downbeat information is produced).
+    if beat_array.size == 0:
+        beat_times: list[float] = []
+    elif beat_array.ndim == 1:
+        beat_times = [float(t) for t in beat_array]
+    else:
+        beat_times = [float(t) for t in beat_array[:, 0]]
     tempo = _tempo_from_beats(beat_times)
 
     chord_features = CNNChordFeatureProcessor()(audio)
@@ -297,6 +308,7 @@ def analyze_musical_context(
     audio_path: str,
     output_dir: str,
     model_dir: str,
+    force: bool = False,
 ) -> BeatChordAnalysis:
     """Analyse a stem's beats and chords.
 

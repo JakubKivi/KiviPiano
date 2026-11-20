@@ -145,6 +145,7 @@ def separate_stem(
     model_dir: str,
     separator_name: str = "demucs",
     stem_name: str = "piano",
+    force: bool = False,
 ) -> Path:
     source = Path(audio_path).expanduser().resolve()
     if not source.is_file():
@@ -164,7 +165,7 @@ def separate_stem(
     model_path.mkdir(parents=True, exist_ok=True)
 
     stem_path = expected_stem_path(source, output_path, separator_name, stem_name)
-    if stem_path.is_file():
+    if stem_path.is_file() and not force:
         return stem_path
 
     if os.environ.get("KIVIPIANO_CONTAINER_WORKER") != "1":

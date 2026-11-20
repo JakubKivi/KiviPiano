@@ -17,6 +17,13 @@ from kivipiano.separation import SEPARATOR_STEMS
 from kivipiano.transcription import AMT_MODELS
 from kivipiano.ui.midi_view import PianoRollView
 
+class ScrollSafeSlider(ctk.CTkSlider):
+    """CTkSlider that ignores the mouse wheel while it is disabled."""
+
+    def _mouse_scroll_event(self, event):
+        if self._state == "normal":
+            super()._mouse_scroll_event(event)
+
 
 class InputPanel(ctk.CTkFrame):
     def __init__(
@@ -136,6 +143,9 @@ class SeparatorPanel(ctk.CTkFrame):
         self.spleeter_stem = ctk.StringVar(value="Piano")
 
         self._on_change = on_change
+        self.force_reload = ctk.BooleanVar(value=False)
+        self.result_lbl = ctk.CTkLabel(self, text="", text_color="gray")
+        self.result_lbl.pack(anchor="w", padx=28, pady=(4, 0))
         self._build_separator(
             "demucs",
             "Use Demucs",
@@ -154,6 +164,11 @@ class SeparatorPanel(ctk.CTkFrame):
             self.spleeter_stem,
             spleeter_ok,
         )
+        ctk.CTkCheckBox(
+            self,
+            text="Force reload (delete the stored stem and separate again)",
+            variable=self.force_reload,
+        ).pack(anchor="w", padx=28, pady=(6, 0))
 
     def _build_separator(
         self,
@@ -213,6 +228,15 @@ class SeparatorPanel(ctk.CTkFrame):
             self.use_demucs.set(False)
         self._update_controls()
         self._on_change()
+
+    def set_result_status(self, stem_path: Path | None) -> None:
+        """Show whether a stored stem already exists for the current settings."""
+        if stem_path is not None and stem_path.is_file():
+            self.result_lbl.configure(
+                text=f"Stored result found: {stem_path.name} — it will be reused.",
+            )
+        else:
+            self.result_lbl.configure(text="No stored result yet — it will be created.")
 
     def _update_controls(self) -> None:
         if self.use_demucs.get():
@@ -293,7 +317,7 @@ class FusionSettingsPanel(ctk.CTkFrame):
         )
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.pack(fill="x", padx=28)
-        slider = ctk.CTkSlider(
+        slider = ScrollSafeSlider(
             row,
             from_=0,
             to=100,
@@ -340,6 +364,7 @@ class FilterSettingsPanel(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self._on_change = on_change
 
+        self._value_labels: list[tuple[ctk.IntVar, ctk.CTkLabel, str]] = []
         self.duration_enabled = ctk.BooleanVar(value=True)
         self.velocity_enabled = ctk.BooleanVar(value=True)
         self.pitch_enabled = ctk.BooleanVar(value=True)
@@ -351,7 +376,7 @@ class FilterSettingsPanel(ctk.CTkFrame):
         self.velocity_percent = ctk.IntVar(value=20)
         self.min_pitch = ctk.IntVar(value=28)
         self.max_pitch = ctk.IntVar(value=96)
-        self.merge_gap_ms = ctk.IntVar(value=40)
+        self.merge_gap_ms = ctk.IntVar(value=50)
         self.polyphony_max = ctk.IntVar(value=5)
         self.overtone_ratio_percent = ctk.IntVar(value=50)
 
@@ -370,6 +395,16 @@ class FilterSettingsPanel(ctk.CTkFrame):
             justify="left",
         ).pack(anchor="w", pady=(0, 4))
 
+        self.grid_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.grid_frame.pack(fill="x")
+        self.grid_frame.grid_columnconfigure((0, 1), weight=1, uniform="filters")
+        ctk.CTkButton(
+            self,
+            text="Set default",
+            command=self.reset_defaults,
+            width=120,
+            height=30,
+        ).pack(anchor="e", padx=12, pady=(0, 4))
         self._add_filter(
             "Duration gate",
             self.duration_enabled,
@@ -378,6 +413,7 @@ class FilterSettingsPanel(ctk.CTkFrame):
             10,
             200,
             " ms",
+            cell=(0, 0),
         )
         self._add_filter(
             "Velocity gate",
@@ -387,8 +423,9 @@ class FilterSettingsPanel(ctk.CTkFrame):
             0,
             100,
             "%",
+            cell=(0, 1),
         )
-        self._add_pitch_filter()
+        self._add_pitch_filter(cell=(1, 0))
         self._add_filter(
             "Note merging",
             self.merge_enabled,
@@ -397,6 +434,7 @@ class FilterSettingsPanel(ctk.CTkFrame):
             5,
             120,
             " ms",
+            cell=(1, 1),
         )
         self._add_filter(
             "Polyphony limit",
@@ -406,6 +444,7 @@ class FilterSettingsPanel(ctk.CTkFrame):
             1,
             12,
             "",
+            cell=(2, 0),
         )
         self._add_filter(
             "Overtone suppression",
@@ -415,7 +454,28 @@ class FilterSettingsPanel(ctk.CTkFrame):
             0,
             100,
             "%",
+            cell=(2, 1),
         )
+
+    def reset_defaults(self) -> None:
+        """Restore every filter to the values it started with."""
+        self.duration_enabled.set(True)
+        self.velocity_enabled.set(True)
+        self.pitch_enabled.set(True)
+        self.merge_enabled.set(True)
+        self.polyphony_enabled.set(True)
+        self.overtone_enabled.set(True)
+        self.min_duration_ms.set(50)
+        self.velocity_percent.set(20)
+        self.min_pitch.set(28)
+        self.max_pitch.set(96)
+        self.merge_gap_ms.set(50)
+        self.polyphony_max.set(5)
+        self.overtone_ratio_percent.set(50)
+        for param_var, label, unit in self._value_labels:
+            label.configure(text=f"{param_var.get()}{unit}")
+        self._refresh_pitch_range()
+        self._on_change()
 
     def _add_filter(
         self,
@@ -426,8 +486,11 @@ class FilterSettingsPanel(ctk.CTkFrame):
         low: int,
         high: int,
         unit: str,
+        cell: tuple[int, int] = (0, 0),
     ) -> None:
-        header = ctk.CTkFrame(self, fg_color="transparent")
+        cell_frame = ctk.CTkFrame(self.grid_frame, fg_color="transparent")
+        cell_frame.grid(row=cell[0], column=cell[1], sticky="nsew", padx=6, pady=2)
+        header = ctk.CTkFrame(cell_frame, fg_color="transparent")
         header.pack(fill="x", pady=(6, 0))
         ctk.CTkCheckBox(
             header, text=title, variable=enabled_var, command=self._on_change
@@ -436,10 +499,11 @@ class FilterSettingsPanel(ctk.CTkFrame):
             header, text=f"{param_var.get()}{unit}", width=72, anchor="e"
         )
         value_label.pack(side="right")
+        self._value_labels.append((param_var, value_label, unit))
 
-        slider_row = ctk.CTkFrame(self, fg_color="transparent")
-        slider_row.pack(fill="x", padx=28)
-        ctk.CTkSlider(
+        slider_row = ctk.CTkFrame(cell_frame, fg_color="transparent")
+        slider_row.pack(fill="x", padx=12)
+        ScrollSafeSlider(
             slider_row,
             from_=low,
             to=high,
@@ -451,12 +515,12 @@ class FilterSettingsPanel(ctk.CTkFrame):
         ).pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         ctk.CTkLabel(
-            self,
+            cell_frame,
             text=description,
             text_color="gray",
-            wraplength=620,
+            wraplength=300,
             justify="left",
-        ).pack(anchor="w", padx=28, pady=(0, 2))
+        ).pack(anchor="w", padx=12, pady=(0, 2))
 
     def _refresh_label(
         self, param_var: ctk.IntVar, label: ctk.CTkLabel, unit: str
@@ -464,8 +528,10 @@ class FilterSettingsPanel(ctk.CTkFrame):
         label.configure(text=f"{param_var.get()}{unit}")
         self._on_change()
 
-    def _add_pitch_filter(self) -> None:
-        header = ctk.CTkFrame(self, fg_color="transparent")
+    def _add_pitch_filter(self, cell: tuple[int, int] = (0, 0)) -> None:
+        cell_frame = ctk.CTkFrame(self.grid_frame, fg_color="transparent")
+        cell_frame.grid(row=cell[0], column=cell[1], sticky="nsew", padx=6, pady=2)
+        header = ctk.CTkFrame(cell_frame, fg_color="transparent")
         header.pack(fill="x", pady=(6, 0))
         ctk.CTkCheckBox(
             header,
@@ -481,27 +547,27 @@ class FilterSettingsPanel(ctk.CTkFrame):
         )
         self.pitch_range_label.pack(side="right")
 
-        self._pitch_slider("Lowest pitch", self.min_pitch, self._on_min_pitch)
-        self._pitch_slider("Highest pitch", self.max_pitch, self._on_max_pitch)
+        self._pitch_slider(cell_frame, "Lowest pitch", self.min_pitch, self._on_min_pitch)
+        self._pitch_slider(cell_frame, "Highest pitch", self.max_pitch, self._on_max_pitch)
 
         ctk.CTkLabel(
-            self,
+            cell_frame,
             text="Keep only MIDI pitches inside this range (drops cymbal bleed "
             "and bass rumble).",
             text_color="gray",
-            wraplength=620,
+            wraplength=300,
             justify="left",
-        ).pack(anchor="w", padx=28, pady=(0, 2))
+        ).pack(anchor="w", padx=12, pady=(0, 2))
 
     def _pitch_slider(
-        self, title: str, param_var: ctk.IntVar, command: Callable
+        self, parent, title: str, param_var: ctk.IntVar, command: Callable
     ) -> None:
-        row = ctk.CTkFrame(self, fg_color="transparent")
-        row.pack(fill="x", padx=28)
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=12)
         ctk.CTkLabel(row, text=title, text_color="gray", width=96, anchor="w").pack(
             side="left", padx=(0, 10)
         )
-        ctk.CTkSlider(
+        ScrollSafeSlider(
             row,
             from_=20,
             to=108,
@@ -577,10 +643,12 @@ class AMTPanel(ctk.CTkFrame):
             name: ctk.BooleanVar(value=False) for name in self._model_names
         }
         self.weight_sliders: dict[str, ctk.CTkSlider] = {}
+        self.weight_rows: dict[str, ctk.CTkFrame] = {}
         self.weight_labels: dict[str, ctk.CTkLabel] = {}
         self.lock_checks: dict[str, ctk.CTkCheckBox] = {}
         self._on_change = on_change
         self._updating = False
+        self.force_reload = ctk.BooleanVar(value=False)
 
         ctk.CTkLabel(
             self,
@@ -605,12 +673,17 @@ class AMTPanel(ctk.CTkFrame):
             "bytedance": "ByteDance. High-resolution piano transcription with pedals.",
             "omnizart": "Music and Culture Technology Lab. General music transcription.",
         }
-        options = ctk.CTkScrollableFrame(self, height=280, fg_color="transparent")
+        options = ctk.CTkFrame(self, fg_color="transparent")
         options.pack(fill="x")
-        for model_name, label in AMT_MODELS.items():
+        options.grid_columnconfigure((0, 1), weight=1, uniform="models")
+        for index, (model_name, label) in enumerate(AMT_MODELS.items()):
             is_available = bool(available.get(model_name, False))
+            row_frame = ctk.CTkFrame(options, fg_color="transparent")
+            row_frame.grid(
+                row=index // 2, column=index % 2, sticky="nsew", padx=6, pady=2
+            )
             self._build_model_row(
-                options, model_name, label, descriptions[model_name], is_available
+                row_frame, model_name, label, descriptions[model_name], is_available
             )
 
         self.total_label = ctk.CTkLabel(
@@ -618,10 +691,26 @@ class AMTPanel(ctk.CTkFrame):
         )
         self.total_label.pack(anchor="w", pady=(6, 2))
 
+        self.result_lbl = ctk.CTkLabel(self, text="", text_color="gray")
+        self.result_lbl.pack(anchor="w", pady=(4, 0))
+        ctk.CTkCheckBox(
+            self,
+            text="Force reload (delete the stored transcriptions and run the models again)",
+            variable=self.force_reload,
+        ).pack(anchor="w", pady=(4, 0))
+
         self.fusion_settings = FusionSettingsPanel(self, on_change=self._on_change)
         self.fusion_settings.pack(fill="x", pady=(2, 4))
+        self._update_fusion_state()
 
         self._refresh_all_labels()
+
+    def _update_fusion_state(self) -> None:
+        """Fusion only applies when two or more models are enabled."""
+        if self._enabled_count() > 1:
+            self.fusion_settings.pack(fill="x", pady=(2, 4))
+        else:
+            self.fusion_settings.pack_forget()
 
     def _build_model_row(
         self,
@@ -656,7 +745,6 @@ class AMTPanel(ctk.CTkFrame):
             variable=self.locked_vars[model_name],
             command=lambda name=model_name: self._on_lock(name),
         )
-        lock.pack(side="right")
         self.lock_checks[model_name] = lock
 
         ctk.CTkLabel(
@@ -668,11 +756,11 @@ class AMTPanel(ctk.CTkFrame):
         ).pack(anchor="w", padx=28, pady=(0, 4))
 
         weight_row = ctk.CTkFrame(row, fg_color="transparent")
-        weight_row.pack(fill="x", padx=28)
+        self.weight_rows[model_name] = weight_row
         ctk.CTkLabel(weight_row, text="Weight", text_color="gray").pack(
             side="left", padx=(0, 10)
         )
-        slider = ctk.CTkSlider(
+        slider = ScrollSafeSlider(
             weight_row,
             from_=0,
             to=100,
@@ -687,6 +775,20 @@ class AMTPanel(ctk.CTkFrame):
         self.weight_labels[model_name] = weight_label
 
         self._update_row_state(model_name)
+
+    def set_result_status(self, stored_models: list[str], selected_models: list[str]) -> None:
+        """Say which selected models already have a stored transcription."""
+        if not selected_models:
+            self.result_lbl.configure(text="")
+            return
+        stored = [name for name in selected_models if name in stored_models]
+        missing = [name for name in selected_models if name not in stored_models]
+        parts = []
+        if stored:
+            parts.append(f"stored (reused): {', '.join(stored)}")
+        if missing:
+            parts.append(f"to be created: {', '.join(missing)}")
+        self.result_lbl.configure(text="Transcriptions: " + "; ".join(parts))
 
     def selection(self) -> dict[str, float] | None:
         """Return the selected models' normalized weights (they sum to ``1``)."""
@@ -721,23 +823,70 @@ class AMTPanel(ctk.CTkFrame):
         return self.fusion_settings.config()
 
     def _on_toggle(self, model_name: str) -> None:
-        if not self.enabled_vars[model_name].get():
-            # Return the freed weight to the remaining enabled models so the
-            # total stays at 100%.
+        enabled_now = self.enabled_vars[model_name].get()
+        freed = 0
+        if not enabled_now:
             freed = self.weight_vars[model_name].get()
             self.weight_vars[model_name].set(0)
-            remaining = [
-                name
-                for name in self._model_names
-                if name != model_name and self.enabled_vars[name].get()
-            ]
-            unlocked = [name for name in remaining if not self.locked_vars[name].get()]
-            recipients = unlocked or remaining
-            if recipients and freed > 0:
-                self._add_weight(recipients, freed)
-        self._update_row_state(model_name)
+            self.locked_vars[model_name].set(False)
+        self._rebalance_after_toggle(model_name, enabled_now, freed)
+        for name in self._model_names:
+            self._update_row_state(name)
+        self._update_fusion_state()
         self._refresh_all_labels()
         self._on_change()
+
+    def _rebalance_after_toggle(
+        self, model_name: str, enabled_now: bool, freed: int
+    ) -> None:
+        """Keep the enabled weights summing to exactly 100 after a toggle.
+
+        Covers: adding a model (it gets an equal share taken from the others),
+        removing a model (its weight goes to the remaining models), a single
+        remaining model (it takes 100%), and an all-locked set that no longer
+        sums to 100 (the smallest locked weights are unlocked to absorb it).
+        """
+        enabled = [name for name in self._model_names if self.enabled_vars[name].get()]
+        if not enabled:
+            return
+        if len(enabled) == 1:
+            self.weight_vars[enabled[0]].set(100)
+            return
+
+        if enabled_now:
+            # Give the new model an equal share, taken from the models that can give.
+            share = 100 // len(enabled)
+            self.weight_vars[model_name].set(share)
+            others = [name for name in enabled if name != model_name]
+            givers = [n for n in others if not self.locked_vars[n].get()] or others
+            self._fit_to_total(enabled, givers, model_name)
+        else:
+            recipients = [n for n in enabled if not self.locked_vars[n].get()] or enabled
+            self._add_weight(recipients, freed)
+
+        if sum(self.weight_vars[n].get() for n in enabled) != 100:
+            self._fit_to_total(enabled, enabled, None)
+
+    def _fit_to_total(
+        self, enabled: list[str], adjustable: list[str], keep: str | None
+    ) -> None:
+        """Adjust ``adjustable`` weights (never ``keep``) so ``enabled`` sums to 100."""
+        total = sum(self.weight_vars[n].get() for n in enabled)
+        diff = 100 - total
+        if diff == 0:
+            return
+        movable = [n for n in adjustable if n != keep]
+        if not movable:
+            return
+        current = [self.weight_vars[n].get() for n in movable]
+        if diff > 0:
+            additions = self._distribute(diff, current)
+            for name, add in zip(movable, additions):
+                self.weight_vars[name].set(self.weight_vars[name].get() + add)
+        else:
+            removals = self._distribute(-diff, current)
+            for name, rem in zip(movable, removals):
+                self.weight_vars[name].set(max(0, self.weight_vars[name].get() - rem))
 
     def _on_lock(self, model_name: str) -> None:
         self._update_row_state(model_name)
@@ -828,12 +977,23 @@ class AMTPanel(ctk.CTkFrame):
     def _update_row_state(self, model_name: str) -> None:
         enabled = self.enabled_vars[model_name].get()
         locked = self.locked_vars[model_name].get()
-        self.weight_sliders[model_name].configure(
-            state="normal" if (enabled and not locked) else "disabled"
+        only_one = self._enabled_count() <= 1
+        weight_row = self.weight_rows[model_name]
+        lock = self.lock_checks[model_name]
+        if enabled and not only_one:
+            lock.pack(side="right")
+            weight_row.pack(fill="x", padx=28)
+        else:
+            lock.pack_forget()
+            weight_row.pack_forget()
+        self.weight_sliders[model_name].configure(state="disabled" if locked else "normal")
+        self.weight_labels[model_name].configure(
+            text=f"{self.weight_vars[model_name].get()}%"
         )
-        self.lock_checks[model_name].configure(
-            state="normal" if enabled else "disabled"
-        )
+
+    def _enabled_count(self) -> int:
+        return sum(1 for name in self._model_names if self.enabled_vars[name].get())
+
         self.weight_labels[model_name].configure(
             text=f"{self.weight_vars[model_name].get()}%"
         )
@@ -975,11 +1135,13 @@ class ContextPanel(ctk.CTkFrame):
             enable_row,
             text="Enable beat & chord refinement",
             variable=self.enabled,
-            command=self._on_change,
+            command=self._on_enable_toggle,
         )
         if not available:
             enable_check.configure(state="disabled")
         enable_check.pack(anchor="w")
+        self._body = ctk.CTkFrame(self, fg_color="transparent")
+        self._body.grid_columnconfigure((0, 1), weight=1, uniform="context")
 
         self._add_toggle_and_slider(
             "Beat snapping",
@@ -990,6 +1152,7 @@ class ContextPanel(ctk.CTkFrame):
             " ms",
             "Snap a note's onset onto the nearest beat when it is within this "
             "distance (fixes slight shifts when chords are struck).",
+            column=0,
         )
         self._add_toggle_and_slider(
             "Chord false-positive filter",
@@ -1000,7 +1163,21 @@ class ContextPanel(ctk.CTkFrame):
             " ms",
             "Drop a note that is farther than this from a beat and not part of "
             "the chord sounding at that moment.",
+            column=1,
         )
+        self._body.pack(fill="x")
+        self._update_context_state()
+
+    def _on_enable_toggle(self) -> None:
+        self._update_context_state()
+        self._on_change()
+
+    def _update_context_state(self) -> None:
+        """Show the beat and chord sub-controls only while refinement is on."""
+        if self.enabled.get():
+            self._body.pack(fill="x")
+        else:
+            self._body.pack_forget()
 
     def _add_toggle_and_slider(
         self,
@@ -1011,8 +1188,12 @@ class ContextPanel(ctk.CTkFrame):
         high: int,
         unit: str,
         description: str,
+        column: int = 0,
     ) -> None:
-        header = ctk.CTkFrame(self, fg_color="transparent")
+        column_frame = ctk.CTkFrame(self._body, fg_color="transparent")
+        column_frame.grid(row=0, column=column, sticky="nsew", padx=6, pady=(4, 0))
+
+        header = ctk.CTkFrame(column_frame, fg_color="transparent")
         header.pack(fill="x", pady=(6, 0))
         ctk.CTkCheckBox(
             header, text=title, variable=enabled_var, command=self._on_change
@@ -1022,9 +1203,9 @@ class ContextPanel(ctk.CTkFrame):
         )
         value_label.pack(side="right")
 
-        slider_row = ctk.CTkFrame(self, fg_color="transparent")
-        slider_row.pack(fill="x", padx=28)
-        ctk.CTkSlider(
+        slider_row = ctk.CTkFrame(column_frame, fg_color="transparent")
+        slider_row.pack(fill="x", padx=12)
+        ScrollSafeSlider(
             slider_row,
             from_=low,
             to=high,
@@ -1036,12 +1217,12 @@ class ContextPanel(ctk.CTkFrame):
         ).pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         ctk.CTkLabel(
-            self,
+            column_frame,
             text=description,
             text_color="gray",
-            wraplength=620,
+            wraplength=300,
             justify="left",
-        ).pack(anchor="w", padx=28, pady=(0, 2))
+        ).pack(anchor="w", padx=12, pady=(0, 2))
 
     def _refresh_label(
         self, param_var: ctk.IntVar, label: ctk.CTkLabel, unit: str
@@ -1244,7 +1425,7 @@ class DevicePanel(ctk.CTkFrame):
         ctk.CTkLabel(prepare_row, text="Prepare lead (ms)", width=150, anchor="w").pack(
             side="left", padx=(0, 10)
         )
-        ctk.CTkSlider(
+        ScrollSafeSlider(
             prepare_row,
             from_=0,
             to=2000,
@@ -1265,7 +1446,7 @@ class DevicePanel(ctk.CTkFrame):
         ctk.CTkLabel(tempo_row, text="Tempo", width=150, anchor="w").pack(
             side="left", padx=(0, 10)
         )
-        ctk.CTkSlider(
+        ScrollSafeSlider(
             tempo_row,
             from_=30,
             to=240,
@@ -1283,7 +1464,7 @@ class DevicePanel(ctk.CTkFrame):
         ctk.CTkLabel(split_row, text="Hand split", width=150, anchor="w").pack(
             side="left", padx=(0, 10)
         )
-        ctk.CTkSlider(
+        ScrollSafeSlider(
             split_row,
             from_=48,
             to=72,

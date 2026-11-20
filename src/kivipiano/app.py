@@ -16,13 +16,21 @@ from kivipiano.midi_export import (
     write_tempo_midi,
 )
 from kivipiano.musical_context import context_available
-from kivipiano.separation import demucs_available, spleeter_available
+from kivipiano.separation import (
+    demucs_available,
+    expected_stem_path,
+    spleeter_available,
+)
 from kivipiano.services.processing import (
     AudioProcessingService,
     ModelWeight,
     ProcessingRequest,
 )
-from kivipiano.transcription import AMT_MODELS, amt_model_available
+from kivipiano.transcription import (
+    AMT_MODELS,
+    amt_model_available,
+    transcription_paths,
+)
 from kivipiano.ui.components import (
     AMTPanel,
     ContextPanel,
@@ -35,8 +43,8 @@ from kivipiano.ui.components import (
 )
 
 
-ctk.set_appearance_mode("System")
-ctk.set_default_color_theme("blue")
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme(str(Path(__file__).parent / "ui" / "kivi_theme.json"))
 
 
 class KiviPianoApp(ctk.CTk):
@@ -52,8 +60,8 @@ class KiviPianoApp(ctk.CTk):
         )
 
         self.title("KiviPiano - Piano Transcription")
-        self.geometry("760x900")
-        self.minsize(680, 780)
+        self.geometry("1180x900")
+        self.minsize(1080, 780)
 
         self.processing_results: Queue[
             tuple[bool, str, Path | None, Path | None, Path | None, tuple | None]
@@ -265,11 +273,26 @@ class KiviPianoApp(ctk.CTk):
             # The Context -> Filters transition is gated behind processing.
             if not (step == "context" and not self._midi_ready()):
                 self.next_btn.pack(side="right")
-            if step in ("amt", "context"):
-                self.process_btn.pack(side="right", padx=(0, 8))
+        if step == "context":
+            self.process_btn.pack(side="right", padx=(0, 8))
+
+    def _step_errors(self, step: str) -> list[str]:
+        if step == "separator" and self.separator_panel.selection() is None:
+            return ["Select exactly one separator: Demucs or Spleeter."]
+        if step == "amt":
+            return self.amt_panel.validation_errors()
+        if step == "context":
+            return self.context_panel.validation_errors()
+        if step == "filters":
+            return self.filters_panel.validation_errors()
+        return []
 
     def _next_step(self) -> None:
         index = self.steps.index(self.current_step.get())
+        errors = self._step_errors(self.current_step.get())
+        if errors:
+            messagebox.showwarning("Check settings", errors[0], parent=self)
+            return
         if index < len(self.steps) - 1:
             if self.current_step.get() == "filters":
                 self._apply_filters()
@@ -346,6 +369,53 @@ class KiviPianoApp(ctk.CTk):
                 and source_path.suffix.lower() in {".mp3", ".wav"}
             )
         self.process_btn.configure(state="normal" if ready else "disabled")
+        self._refresh_result_status()
+
+    def _current_source_path(self) -> Path | None:
+        """The audio file the separator would read, if it is known yet."""
+        selected_tab = self.input_panel.selected_tab
+        if selected_tab == "Saved Files":
+            selected = self.input_panel.library_files.get(
+                self.input_panel.library_selection.get()
+            )
+            return selected if selected is not None and selected.is_file() else None
+        if selected_tab == "YouTube":
+            return None
+        path = Path(self.input_panel.file_path.get()).expanduser()
+        return path if path.is_file() else None
+
+    def _refresh_result_status(self) -> None:
+        """Tell the user whether each step already has a stored result."""
+        if not hasattr(self, "separator_panel"):
+            return
+        selection = self.separator_panel.selection()
+        source = self._current_source_path()
+        stem_path = None
+        if selection is not None and source is not None:
+            separator_name, stem_name = selection
+            stem_path = expected_stem_path(
+                source,
+                source.parent / "KiviPiano_output",
+                separator_name,
+                stem_name,
+            )
+        self.separator_panel.set_result_status(stem_path)
+        self._refresh_transcription_status(stem_path)
+
+    def _refresh_transcription_status(self, stem_path: Path | None) -> None:
+        """Which selected AMT models already have stored CSV/MIDI for this stem."""
+        if not hasattr(self, "amt_panel"):
+            return
+        selected = list((self.amt_panel.selection() or {}).keys())
+        stored = []
+        if stem_path is not None and stem_path.is_file():
+            for name in selected:
+                csv_path, midi_path = transcription_paths(
+                    stem_path, stem_path.parent, name
+                )
+                if csv_path.is_file() and midi_path.is_file():
+                    stored.append(name)
+        self.amt_panel.set_result_status(stored, selected)
 
     def process_file(self) -> None:
         selection = self.separator_panel.selection()
@@ -430,6 +500,8 @@ class KiviPianoApp(ctk.CTk):
             fusion=self.amt_panel.fusion_config(),
             context=self.context_panel.context_config(),
             filters=self.filters_panel.filter_config(),
+            force_separation=self.separator_panel.force_reload.get(),
+            force_transcription=self.amt_panel.force_reload.get(),
         )
         self.processing = True
         self.process_btn.configure(state="disabled")

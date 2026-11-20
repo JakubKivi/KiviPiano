@@ -132,7 +132,7 @@ class NoteMerger:
     than ``max_gap`` seconds are joined into a single note.
     """
 
-    def __init__(self, max_gap: float = 0.04) -> None:
+    def __init__(self, max_gap: float = 0.05) -> None:
         _require_positive("max_gap", max_gap)
         self.max_gap = max_gap
 
@@ -287,7 +287,7 @@ class FilterConfig:
     max_pitch: int = 96
 
     merge_notes: bool = True
-    merge_gap: float = 0.04
+    merge_gap: float = 0.05
 
     polyphony_limit: bool = True
     polyphony_window: float = 0.05

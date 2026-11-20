@@ -94,6 +94,7 @@ def transcribe_piano(
     output_dir: str,
     model_dir: str,
     model_name: str = "basic_pitch",
+    force: bool = False,
 ) -> tuple[Path, Path, int]:
     source = Path(audio_path).expanduser().resolve()
     if not source.is_file():
@@ -105,7 +106,7 @@ def transcribe_piano(
     destination.mkdir(parents=True, exist_ok=True)
     csv_path, midi_path = transcription_paths(source, destination, model_name)
 
-    if midi_path.is_file() and csv_path.is_file():
+    if midi_path.is_file() and csv_path.is_file() and not force:
         return csv_path, midi_path, _read_note_count(csv_path)
 
     if os.environ.get("KIVIPIANO_CONTAINER_WORKER") != "1":

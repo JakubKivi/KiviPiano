@@ -33,6 +33,44 @@ def image_available(model_name: str) -> bool:
     return result.returncode == 0
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+# Compose service name for each model (matches docker-compose.yml).
+MODEL_SERVICES = {
+    "demucs": "demucs",
+    "spleeter": "spleeter",
+    "basic_pitch": "basic-pitch",
+    "magenta": "magenta",
+    "bytedance": "bytedance",
+    "omnizart": "omnizart",
+    "madmom": "madmom",
+}
+
+
+def ensure_image(model_name: str) -> None:
+    """Build a model's image only if it is not already present locally.
+
+    Images are built on first use instead of all at once during install, so a
+    model that is never selected never costs a build.
+    """
+    if image_available(model_name):
+        return
+    service = MODEL_SERVICES[model_name]
+    result = subprocess.run(
+        ["docker", "compose", "build", service],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        details = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            f"Could not build the {model_name} image"
+            + (f":\n{details[-3000:]}" if details else ".")
+        )
+
+
 def run_model_container(
     model_name: str,
     operation: str,
@@ -47,6 +85,7 @@ def run_model_container(
         raise ValueError(f"Unknown model container: {model_name}")
     if operation not in {"prepare", "transcribe", "separate", "analyze"}:
         raise ValueError(f"Unknown container operation: {operation}")
+    ensure_image(model_name)
 
     model_path = Path(model_dir).expanduser().resolve()
     model_path.mkdir(parents=True, exist_ok=True)
